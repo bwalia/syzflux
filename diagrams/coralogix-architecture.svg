@@ -1,0 +1,198 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 760" role="img" aria-labelledby="title desc">
+  <title id="title">Coralogix Stream-First Architecture</title>
+  <desc id="desc">Architecture diagram showing ingest sources flowing through Kafka Connect and Streama, then TCO Optimizer routing to hot storage, customer S3 cold archive, or block, with DataPrime and AI interfaces querying both tiers.</desc>
+
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0B1F2A"/>
+      <stop offset="55%" stop-color="#123447"/>
+      <stop offset="100%" stop-color="#0E2A24"/>
+    </linearGradient>
+    <linearGradient id="panel" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#1A4054"/>
+      <stop offset="100%" stop-color="#143647"/>
+    </linearGradient>
+    <linearGradient id="stream" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#1FA8A0"/>
+      <stop offset="100%" stop-color="#2EC4B6"/>
+    </linearGradient>
+    <linearGradient id="hot" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#E07A3D"/>
+      <stop offset="100%" stop-color="#C45C28"/>
+    </linearGradient>
+    <linearGradient id="cold" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#3D7EA6"/>
+      <stop offset="100%" stop-color="#2A5F80"/>
+    </linearGradient>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#7FB8C9"/>
+    </marker>
+    <marker id="arrowHot" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#E07A3D"/>
+    </marker>
+    <marker id="arrowCold" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#5BA3C9"/>
+    </marker>
+    <filter id="softShadow" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="6" stdDeviation="8" flood-color="#000000" flood-opacity="0.28"/>
+    </filter>
+    <pattern id="grid" width="24" height="24" patternUnits="userSpaceOnUse">
+      <path d="M 24 0 L 0 0 0 24" fill="none" stroke="#1E4A5C" stroke-width="0.6" opacity="0.35"/>
+    </pattern>
+  </defs>
+
+  <rect width="1200" height="760" fill="url(#bg)"/>
+  <rect width="1200" height="760" fill="url(#grid)"/>
+
+  <text x="48" y="48" fill="#E8F4F8" font-family="Georgia, 'Times New Roman', serif" font-size="28" font-weight="700">Coralogix Architecture</text>
+  <text x="48" y="76" fill="#8FBCCB" font-family="Helvetica, Arial, sans-serif" font-size="14">Stream-first observability: Kafka analysis in motion, S3 cold storage for cost</text>
+
+  <g transform="translate(780, 28)">
+    <rect x="0" y="0" width="380" height="56" rx="10" fill="#102F3C" stroke="#2A5A6E" stroke-width="1"/>
+    <circle cx="24" cy="28" r="6" fill="#2EC4B6"/>
+    <text x="38" y="32" fill="#CDE4EC" font-family="Helvetica, Arial, sans-serif" font-size="12">In-stream</text>
+    <circle cx="120" cy="28" r="6" fill="#E07A3D"/>
+    <text x="134" y="32" fill="#CDE4EC" font-family="Helvetica, Arial, sans-serif" font-size="12">Hot (High)</text>
+    <circle cx="230" cy="28" r="6" fill="#5BA3C9"/>
+    <text x="244" y="32" fill="#CDE4EC" font-family="Helvetica, Arial, sans-serif" font-size="12">Cold S3 (Med/Low)</text>
+  </g>
+
+  <g filter="url(#softShadow)">
+    <rect x="40" y="120" width="180" height="420" rx="16" fill="url(#panel)" stroke="#2F6A7F" stroke-width="1.5"/>
+  </g>
+  <text x="130" y="150" text-anchor="middle" fill="#7FD4CC" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="700" letter-spacing="1.5">SOURCES</text>
+
+  <g>
+    <rect x="58" y="170" width="144" height="52" rx="8" fill="#0F2A36" stroke="#3A7A90"/>
+    <text x="130" y="192" text-anchor="middle" fill="#E8F4F8" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="600">Apps / Services</text>
+    <text x="130" y="210" text-anchor="middle" fill="#8FBCCB" font-family="Helvetica, Arial, sans-serif" font-size="11">OTel / Fluent / SDKs</text>
+  </g>
+  <g>
+    <rect x="58" y="236" width="144" height="52" rx="8" fill="#0F2A36" stroke="#3A7A90"/>
+    <text x="130" y="258" text-anchor="middle" fill="#E8F4F8" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="600">Infra and K8s</text>
+    <text x="130" y="276" text-anchor="middle" fill="#8FBCCB" font-family="Helvetica, Arial, sans-serif" font-size="11">Prometheus / agents</text>
+  </g>
+  <g>
+    <rect x="58" y="302" width="144" height="52" rx="8" fill="#0F2A36" stroke="#3A7A90"/>
+    <text x="130" y="324" text-anchor="middle" fill="#E8F4F8" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="600">Security events</text>
+    <text x="130" y="342" text-anchor="middle" fill="#8FBCCB" font-family="Helvetica, Arial, sans-serif" font-size="11">SIEM / audit / cloud</text>
+  </g>
+  <g>
+    <rect x="58" y="368" width="144" height="52" rx="8" fill="#0F2A36" stroke="#3A7A90"/>
+    <text x="130" y="390" text-anchor="middle" fill="#E8F4F8" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="600">AI workloads</text>
+    <text x="130" y="408" text-anchor="middle" fill="#8FBCCB" font-family="Helvetica, Arial, sans-serif" font-size="11">LLM traces / prompts</text>
+  </g>
+  <text x="130" y="470" text-anchor="middle" fill="#6A9AAB" font-family="Helvetica, Arial, sans-serif" font-size="11">Logs / Metrics / Traces</text>
+  <text x="130" y="490" text-anchor="middle" fill="#6A9AAB" font-family="Helvetica, Arial, sans-serif" font-size="11">Security / AI signals</text>
+
+  <path d="M 220 330 L 268 330" stroke="#7FB8C9" stroke-width="2.5" fill="none" marker-end="url(#arrow)"/>
+
+  <g filter="url(#softShadow)">
+    <rect x="270" y="120" width="280" height="420" rx="16" fill="url(#panel)" stroke="#2EC4B6" stroke-width="2"/>
+  </g>
+  <text x="410" y="150" text-anchor="middle" fill="#7FD4CC" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="700" letter-spacing="1.5">STREAM LAYER</text>
+
+  <g>
+    <rect x="290" y="168" width="240" height="64" rx="10" fill="url(#stream)"/>
+    <text x="410" y="195" text-anchor="middle" fill="#062428" font-family="Helvetica, Arial, sans-serif" font-size="15" font-weight="700">Kafka Connect</text>
+    <text x="410" y="216" text-anchor="middle" fill="#0A3538" font-family="Helvetica, Arial, sans-serif" font-size="12">Ingest to topics and KTables</text>
+  </g>
+
+  <g>
+    <rect x="290" y="252" width="240" height="160" rx="10" fill="#0C2E38" stroke="#2EC4B6" stroke-width="1.5"/>
+    <text x="410" y="280" text-anchor="middle" fill="#2EC4B6" font-family="Helvetica, Arial, sans-serif" font-size="16" font-weight="700">Streama</text>
+    <text x="410" y="302" text-anchor="middle" fill="#A8D5DE" font-family="Helvetica, Arial, sans-serif" font-size="12">Stateful Kafka Streams</text>
+    <line x1="320" y1="316" x2="500" y2="316" stroke="#1F5A66" stroke-width="1"/>
+    <text x="410" y="340" text-anchor="middle" fill="#E8F4F8" font-family="Helvetica, Arial, sans-serif" font-size="12">Parse / Enrich / ML cluster</text>
+    <text x="410" y="360" text-anchor="middle" fill="#E8F4F8" font-family="Helvetica, Arial, sans-serif" font-size="12">In-stream alerts (&lt;1ms)</text>
+    <text x="410" y="380" text-anchor="middle" fill="#E8F4F8" font-family="Helvetica, Arial, sans-serif" font-size="12">Logs/spans to metrics</text>
+    <text x="410" y="400" text-anchor="middle" fill="#8FBCCB" font-family="Helvetica, Arial, sans-serif" font-size="11">No indexing delay for decisions</text>
+  </g>
+
+  <g>
+    <rect x="290" y="432" width="240" height="78" rx="10" fill="#123D3A" stroke="#2EC4B6" stroke-width="1.5"/>
+    <text x="410" y="462" text-anchor="middle" fill="#E8F4F8" font-family="Helvetica, Arial, sans-serif" font-size="14" font-weight="700">TCO Optimizer</text>
+    <text x="410" y="484" text-anchor="middle" fill="#8FBCCB" font-family="Helvetica, Arial, sans-serif" font-size="11">Route by value: High / Med / Low / Block</text>
+  </g>
+
+  <path d="M 550 460 L 618 280" stroke="#E07A3D" stroke-width="2.5" fill="none" marker-end="url(#arrowHot)"/>
+  <path d="M 550 470 L 618 400" stroke="#5BA3C9" stroke-width="2.5" fill="none" marker-end="url(#arrowCold)"/>
+  <path d="M 550 480 L 618 520" stroke="#8A6A7A" stroke-width="2" stroke-dasharray="5 4" fill="none" marker-end="url(#arrow)"/>
+
+  <g filter="url(#softShadow)">
+    <rect x="620" y="120" width="240" height="420" rx="16" fill="url(#panel)" stroke="#2F6A7F" stroke-width="1.5"/>
+  </g>
+  <text x="740" y="150" text-anchor="middle" fill="#7FD4CC" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="700" letter-spacing="1.5">STORAGE TIERS</text>
+
+  <g>
+    <rect x="640" y="172" width="200" height="120" rx="10" fill="url(#hot)"/>
+    <text x="740" y="204" text-anchor="middle" fill="#FFF5EE" font-family="Helvetica, Arial, sans-serif" font-size="14" font-weight="700">HOT - High</text>
+    <text x="740" y="226" text-anchor="middle" fill="#FFE8D6" font-family="Helvetica, Arial, sans-serif" font-size="12">OpenSearch (CX-hosted)</text>
+    <text x="740" y="248" text-anchor="middle" fill="#FFE8D6" font-family="Helvetica, Arial, sans-serif" font-size="11">Fast query / real-time inv.</text>
+    <text x="740" y="270" text-anchor="middle" fill="#FFD4B8" font-family="Helvetica, Arial, sans-serif" font-size="11">Critical / frequent search</text>
+  </g>
+
+  <g>
+    <rect x="640" y="312" width="200" height="140" rx="10" fill="url(#cold)"/>
+    <text x="740" y="344" text-anchor="middle" fill="#EAF6FC" font-family="Helvetica, Arial, sans-serif" font-size="14" font-weight="700">COLD - Med / Low</text>
+    <text x="740" y="366" text-anchor="middle" fill="#D0EAF5" font-family="Helvetica, Arial, sans-serif" font-size="12">Your S3 bucket</text>
+    <text x="740" y="388" text-anchor="middle" fill="#D0EAF5" font-family="Helvetica, Arial, sans-serif" font-size="11">Parquet / open formats</text>
+    <text x="740" y="410" text-anchor="middle" fill="#B8DCEB" font-family="Helvetica, Arial, sans-serif" font-size="11">Infinite retention / low cost</text>
+    <text x="740" y="432" text-anchor="middle" fill="#B8DCEB" font-family="Helvetica, Arial, sans-serif" font-size="11">Still queryable (DataPrime)</text>
+  </g>
+
+  <g>
+    <rect x="640" y="472" width="200" height="48" rx="10" fill="#2A2430" stroke="#6A5A6A" stroke-width="1.5" stroke-dasharray="4 3"/>
+    <text x="740" y="502" text-anchor="middle" fill="#C4A8B4" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="600">BLOCK - drop at ingest</text>
+  </g>
+
+  <path d="M 860 232 L 908 232" stroke="#E07A3D" stroke-width="2.5" fill="none" marker-end="url(#arrowHot)"/>
+  <path d="M 860 382 L 908 382" stroke="#5BA3C9" stroke-width="2.5" fill="none" marker-end="url(#arrowCold)"/>
+
+  <g filter="url(#softShadow)">
+    <rect x="910" y="120" width="250" height="420" rx="16" fill="url(#panel)" stroke="#2F6A7F" stroke-width="1.5"/>
+  </g>
+  <text x="1035" y="150" text-anchor="middle" fill="#7FD4CC" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="700" letter-spacing="1.5">QUERY and AI</text>
+
+  <g>
+    <rect x="930" y="172" width="210" height="100" rx="10" fill="#0F2A36" stroke="#E07A3D" stroke-width="1.5"/>
+    <text x="1035" y="204" text-anchor="middle" fill="#E8F4F8" font-family="Helvetica, Arial, sans-serif" font-size="14" font-weight="700">DataPrime</text>
+    <text x="1035" y="226" text-anchor="middle" fill="#8FBCCB" font-family="Helvetica, Arial, sans-serif" font-size="11">One language across tiers</text>
+    <text x="1035" y="248" text-anchor="middle" fill="#8FBCCB" font-family="Helvetica, Arial, sans-serif" font-size="11">Cross-signal joins</text>
+  </g>
+
+  <g>
+    <rect x="930" y="292" width="210" height="72" rx="10" fill="#0F2A36" stroke="#3A7A90"/>
+    <text x="1035" y="322" text-anchor="middle" fill="#E8F4F8" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="600">Dashboards and alerts</text>
+    <text x="1035" y="344" text-anchor="middle" fill="#8FBCCB" font-family="Helvetica, Arial, sans-serif" font-size="11">Reusable datasets</text>
+  </g>
+
+  <g>
+    <rect x="930" y="384" width="210" height="120" rx="10" fill="#123D3A" stroke="#2EC4B6" stroke-width="1.5"/>
+    <text x="1035" y="416" text-anchor="middle" fill="#2EC4B6" font-family="Helvetica, Arial, sans-serif" font-size="14" font-weight="700">AI interfaces</text>
+    <text x="1035" y="440" text-anchor="middle" fill="#A8D5DE" font-family="Helvetica, Arial, sans-serif" font-size="12">Olly / conversational</text>
+    <text x="1035" y="460" text-anchor="middle" fill="#A8D5DE" font-family="Helvetica, Arial, sans-serif" font-size="12">MCP / Slack / IDE</text>
+    <text x="1035" y="480" text-anchor="middle" fill="#A8D5DE" font-family="Helvetica, Arial, sans-serif" font-size="12">CLI / automation</text>
+  </g>
+
+  <g filter="url(#softShadow)">
+    <rect x="40" y="570" width="1120" height="150" rx="16" fill="#0E2C38" stroke="#2A5A6E" stroke-width="1.5"/>
+  </g>
+  <text x="60" y="608" fill="#7FD4CC" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="700" letter-spacing="1">WHY COST STAYS LOW</text>
+
+  <g>
+    <rect x="60" y="628" width="340" height="70" rx="10" fill="#123D3A" stroke="#2EC4B6"/>
+    <text x="230" y="656" text-anchor="middle" fill="#E8F4F8" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="600">1. Analyze in Kafka stream</text>
+    <text x="230" y="678" text-anchor="middle" fill="#8FBCCB" font-family="Helvetica, Arial, sans-serif" font-size="11">Alerts and insights without indexing everything</text>
+  </g>
+  <g>
+    <rect x="420" y="628" width="340" height="70" rx="10" fill="#1A3548" stroke="#5BA3C9"/>
+    <text x="590" y="656" text-anchor="middle" fill="#E8F4F8" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="600">2. Keep only High in hot store</text>
+    <text x="590" y="678" text-anchor="middle" fill="#8FBCCB" font-family="Helvetica, Arial, sans-serif" font-size="11">Med/Low land in your S3 (cheap object storage)</text>
+  </g>
+  <g>
+    <rect x="780" y="628" width="360" height="70" rx="10" fill="#1A3548" stroke="#3A7A90"/>
+    <text x="960" y="656" text-anchor="middle" fill="#E8F4F8" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="600">3. Query archive without rehydrate</text>
+    <text x="960" y="678" text-anchor="middle" fill="#8FBCCB" font-family="Helvetica, Arial, sans-serif" font-size="11">DataPrime reads Parquet on your cloud</text>
+  </g>
+</svg>

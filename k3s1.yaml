@@ -1,0 +1,2060 @@
+# k3s1.yaml - Next-gen observability POC (stream-first)
+# Apply:  kubectl apply -f k3s1.yaml
+# Target: k3s. Cold store = MinIO. Hot store = OpenSearch. Stream = Redpanda/Kafka API.
+# KUBECONFIG example: export KUBECONFIG=~/.kube/k3s1.yaml
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: obs-system
+  labels:
+    app.kubernetes.io/part-of: obs-poc
+    obs.poc/component: namespace
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: demo-apps
+  labels:
+    app.kubernetes.io/part-of: obs-poc
+    obs.poc/component: namespace
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: demo-noise
+  labels:
+    app.kubernetes.io/part-of: obs-poc
+    obs.poc/component: namespace
+---
+# ========== Secrets ==========
+apiVersion: v1
+kind: Secret
+metadata:
+  name: minio-creds
+  namespace: obs-system
+  labels:
+    app.kubernetes.io/part-of: obs-poc
+    obs.poc/component: minio
+type: Opaque
+stringData:
+  accesskey: minioadmin
+  secretkey: minioadmin123
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: checkout-api-code
+  namespace: demo-apps
+  labels:
+    app.kubernetes.io/part-of: obs-poc
+    obs.poc/component: config
+data:
+  main.py: |
+    #!/usr/bin/env python3
+    """checkout-api: High TCO sample app."""
+    import json, os, random, time, uuid
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    PRIORITY = os.environ.get("TCO_PRIORITY", "high")
+    APP = os.environ.get("APP_NAME", "checkout-api")
+
+
+    def log(level, message, **fields):
+        rec = {
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "level": level,
+            "app": APP,
+            "priority": PRIORITY,
+            "message": message,
+            **fields,
+        }
+        print(json.dumps(rec), flush=True)
+
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, fmt, *args):
+            return
+
+        def _send(self, code, body):
+            data = json.dumps(body).encode()
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def do_GET(self):
+            if self.path.startswith("/healthz"):
+                self._send(200, {"status": "ok"})
+                return
+            if self.path.startswith("/checkout"):
+                order_id = str(uuid.uuid4())[:8]
+                latency = random.randint(20, 400)
+                fail = "fail=1" in self.path or random.random() < 0.08
+                if fail:
+                    log("ERROR", "checkout failed", order_id=order_id, latency_ms=latency, error="payment_declined")
+                    self._send(500, {"ok": False, "order_id": order_id, "error": "payment_declined"})
+                else:
+                    log("INFO", "checkout ok", order_id=order_id, latency_ms=latency)
+                    self._send(200, {"ok": True, "order_id": order_id})
+                return
+            self._send(404, {"error": "not found"})
+
+
+    if __name__ == "__main__":
+        log("INFO", "starting checkout-api")
+        HTTPServer(("0.0.0.0", 8080), Handler).serve_forever()
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: catalog-api-code
+  namespace: demo-apps
+  labels:
+    app.kubernetes.io/part-of: obs-poc
+    obs.poc/component: config
+data:
+  main.py: |
+    #!/usr/bin/env python3
+    """catalog-api: Medium TCO sample app."""
+    import json, os, random, time
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    PRIORITY = os.environ.get("TCO_PRIORITY", "medium")
+    APP = os.environ.get("APP_NAME", "catalog-api")
+    ITEMS = ["sku-100", "sku-200", "sku-300", "sku-400"]
+
+
+    def log(level, message, **fields):
+        print(json.dumps({
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "level": level,
+            "app": APP,
+            "priority": PRIORITY,
+            "message": message,
+            **fields,
+        }), flush=True)
+
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, fmt, *args):
+            return
+
+        def _send(self, code, body):
+            data = json.dumps(body).encode()
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def do_GET(self):
+            if self.path.startswith("/healthz"):
+                self._send(200, {"status": "ok"})
+                return
+            if self.path.startswith("/catalog"):
+                item = random.choice(ITEMS)
+                log("INFO", "catalog lookup", item=item, latency_ms=random.randint(5, 80))
+                self._send(200, {"item": item, "in_stock": True})
+                return
+            self._send(404, {"error": "not found"})
+
+
+    if __name__ == "__main__":
+        log("INFO", "starting catalog-api")
+        HTTPServer(("0.0.0.0", 8080), Handler).serve_forever()
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: payments-worker-code
+  namespace: demo-apps
+  labels:
+    app.kubernetes.io/part-of: obs-poc
+    obs.poc/component: config
+data:
+  main.py: |
+    #!/usr/bin/env python3
+    """payments-worker: High TCO background worker."""
+    import json, os, random, time, uuid
+
+    PRIORITY = os.environ.get("TCO_PRIORITY", "high")
+    APP = os.environ.get("APP_NAME", "payments-worker")
+
+
+    def log(level, message, **fields):
+        print(json.dumps({
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "level": level,
+            "app": APP,
+            "priority": PRIORITY,
+            "message": message,
+            **fields,
+        }), flush=True)
+
+
+    def main():
+        log("INFO", "payments-worker started")
+        while True:
+            tx = str(uuid.uuid4())[:8]
+            if random.random() < 0.12:
+                log("ERROR", "payment settlement failed", tx_id=tx, error="timeout", stack="Traceback: settle()\n  File worker.py")
+            else:
+                log("INFO", "payment settled", tx_id=tx, amount_cents=random.randint(100, 9000))
+            time.sleep(random.uniform(1.0, 3.0))
+
+
+    if __name__ == "__main__":
+        main()
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: analytics-batch-code
+  namespace: demo-apps
+  labels:
+    app.kubernetes.io/part-of: obs-poc
+    obs.poc/component: config
+data:
+  main.py: |
+    #!/usr/bin/env python3
+    """analytics-batch: Low TCO verbose logger."""
+    import json, os, random, time, uuid
+
+    PRIORITY = os.environ.get("TCO_PRIORITY", "low")
+    APP = os.environ.get("APP_NAME", "analytics-batch")
+
+
+    def log(level, message, **fields):
+        print(json.dumps({
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "level": level,
+            "app": APP,
+            "priority": PRIORITY,
+            "message": message,
+            **fields,
+        }), flush=True)
+
+
+    def main():
+        log("INFO", "analytics-batch started")
+        while True:
+            batch = str(uuid.uuid4())[:8]
+            for i in range(random.randint(3, 8)):
+                log("DEBUG", "aggregate row", batch_id=batch, row=i, dim_a=random.randint(1, 5000), dim_b=f"u-{random.randint(1,99999)}")
+            log("INFO", "batch complete", batch_id=batch)
+            time.sleep(random.uniform(2.0, 5.0))
+
+
+    if __name__ == "__main__":
+        main()
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: loadgen-code
+  namespace: demo-apps
+  labels:
+    app.kubernetes.io/part-of: obs-poc
+    obs.poc/component: config
+data:
+  main.py: |
+    #!/usr/bin/env python3
+    """loadgen: continuous traffic to checkout + catalog."""
+    import json, os, random, time, urllib.request
+
+    CHECKOUT = os.environ.get("CHECKOUT_URL", "http://checkout-api.demo-apps:8080/checkout")
+    CATALOG = os.environ.get("CATALOG_URL", "http://catalog-api.demo-apps:8080/catalog")
+
+
+    def hit(url):
+        try:
+            with urllib.request.urlopen(url, timeout=5) as r:
+                r.read()
+        except Exception as e:
+            print(json.dumps({"level": "WARN", "app": "loadgen", "priority": "medium", "message": str(e)}), flush=True)
+
+
+    def main():
+        print(json.dumps({"level": "INFO", "app": "loadgen", "priority": "medium", "message": "loadgen started"}), flush=True)
+        while True:
+            url = CHECKOUT + ("?fail=1" if random.random() < 0.15 else "")
+            hit(url)
+            hit(CATALOG)
+            time.sleep(random.uniform(0.4, 1.2))
+
+
+    if __name__ == "__main__":
+        main()
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: debug-spammer-code
+  namespace: demo-noise
+  labels:
+    app.kubernetes.io/part-of: obs-poc
+    obs.poc/component: config
+data:
+  main.py: |
+    #!/usr/bin/env python3
+    """debug-spammer: Block TCO noisy logger (must be dropped)."""
+    import json, os, time
+
+    PRIORITY = os.environ.get("TCO_PRIORITY", "block")
+    APP = os.environ.get("APP_NAME", "debug-spammer")
+
+
+    def main():
+        n = 0
+        while True:
+            n += 1
+            print(json.dumps({
+                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "level": "DEBUG",
+                "app": APP,
+                "priority": PRIORITY,
+                "message": f"noise spam line {n}",
+                "noise": True,
+            }), flush=True)
+            time.sleep(0.5)
+
+
+    if __name__ == "__main__":
+        main()
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: streama-lite-code
+  namespace: obs-system
+  labels:
+    app.kubernetes.io/part-of: obs-poc
+    obs.poc/component: config
+data:
+  main.py: |
+    #!/usr/bin/env python3
+    """streama-lite: Kafka consume -> enrich/alert/TCO route -> OpenSearch / MinIO / drop."""
+    import gzip
+    import io
+    import json
+    import os
+    import threading
+    import time
+    import uuid
+    from collections import defaultdict, deque
+    from datetime import datetime, timezone
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    from kafka import KafkaConsumer, KafkaProducer
+    from minio import Minio
+    import requests
+
+    KAFKA = os.environ.get("KAFKA_BOOTSTRAP", "redpanda.obs-system:9092")
+    OPENSEARCH = os.environ.get("OPENSEARCH_URL", "http://opensearch.obs-system:9200").rstrip("/")
+    MINIO_ENDPOINT = os.environ.get("MINIO_ENDPOINT", "minio.obs-system:9000")
+    MINIO_ACCESS = os.environ.get("MINIO_ACCESS_KEY", "minioadmin")
+    MINIO_SECRET = os.environ.get("MINIO_SECRET_KEY", "minioadmin")
+    MINIO_SECURE = os.environ.get("MINIO_SECURE", "false").lower() == "true"
+    ALERT_WINDOW_SEC = int(os.environ.get("ALERT_WINDOW_SEC", "60"))
+    ALERT_ERROR_THRESHOLD = int(os.environ.get("ALERT_ERROR_THRESHOLD", "5"))
+    COLD_FLUSH_SEC = int(os.environ.get("COLD_FLUSH_SEC", "15"))
+    COLD_FLUSH_SIZE = int(os.environ.get("COLD_FLUSH_SIZE", "20"))
+
+    stats = {
+        "events_total": defaultdict(lambda: defaultdict(int)),  # priority -> outcome -> count
+        "alerts_total": 0,
+        "dropped_total": 0,
+        "opensearch_writes_total": 0,
+        "minio_writes_total": 0,
+        "enriched_total": 0,
+        "errors_seen": 0,
+        "started_at": time.time(),
+    }
+    stats_lock = threading.Lock()
+    recent_alerts = deque(maxlen=50)
+    error_times = defaultdict(deque)  # app -> timestamps
+    cold_buffers = defaultdict(list)  # (priority, app) -> [events]
+    cold_lock = threading.Lock()
+
+
+    def utcnow():
+        return datetime.now(timezone.utc)
+
+
+    def bump(priority, outcome):
+        with stats_lock:
+            stats["events_total"][priority][outcome] += 1
+            if outcome == "dropped":
+                stats["dropped_total"] += 1
+            elif outcome == "hot":
+                stats["opensearch_writes_total"] += 1
+            elif outcome == "cold":
+                stats["minio_writes_total"] += 1
+
+
+    def metrics_text():
+        lines = []
+        with stats_lock:
+            for p, outcomes in stats["events_total"].items():
+                for o, c in outcomes.items():
+                    lines.append(f'streama_events_total{{priority="{p}",outcome="{o}"}} {c}')
+            lines.append(f'streama_alerts_total {stats["alerts_total"]}')
+            lines.append(f'streama_dropped_total {stats["dropped_total"]}')
+            lines.append(f'streama_opensearch_writes_total {stats["opensearch_writes_total"]}')
+            lines.append(f'streama_minio_writes_total {stats["minio_writes_total"]}')
+            lines.append(f'streama_enriched_total {stats["enriched_total"]}')
+            lines.append(f'streama_errors_seen {stats["errors_seen"]}')
+        return "\n".join(lines) + "\n"
+
+
+    def stats_json():
+        with stats_lock:
+            return {
+                "events_total": {p: dict(o) for p, o in stats["events_total"].items()},
+                "alerts_total": stats["alerts_total"],
+                "dropped_total": stats["dropped_total"],
+                "opensearch_writes_total": stats["opensearch_writes_total"],
+                "minio_writes_total": stats["minio_writes_total"],
+                "enriched_total": stats["enriched_total"],
+                "errors_seen": stats["errors_seen"],
+                "uptime_sec": int(time.time() - stats["started_at"]),
+                "recent_alerts": list(recent_alerts),
+            }
+
+
+    class HealthHandler(BaseHTTPRequestHandler):
+        def log_message(self, fmt, *args):
+            return
+
+        def do_GET(self):
+            if self.path.startswith("/healthz"):
+                body = b'{"status":"ok"}'
+                self.send_response(200)
+            elif self.path.startswith("/metrics"):
+                body = metrics_text().encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/plain; version=0.0.4")
+            elif self.path.startswith("/stats"):
+                body = json.dumps(stats_json()).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+            else:
+                body = b'{"error":"not found"}'
+                self.send_response(404)
+                self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+
+    def start_http():
+        HTTPServer(("0.0.0.0", 8080), HealthHandler).serve_forever()
+
+
+    def wait_kafka(producer):
+        for i in range(60):
+            try:
+                producer.bootstrap_connected() or True
+                # metadata fetch
+                producer.partitions_for("telemetry.enriched")
+                return
+            except Exception:
+                time.sleep(2)
+        raise RuntimeError("kafka not ready")
+
+
+    def ensure_opensearch():
+        for _ in range(60):
+            try:
+                r = requests.get(OPENSEARCH, timeout=3)
+                if r.status_code < 500:
+                    break
+            except Exception:
+                pass
+            time.sleep(2)
+        # index template / create index
+        mapping = {
+            "settings": {"number_of_shards": 1, "number_of_replicas": 0},
+            "mappings": {
+                "properties": {
+                    "timestamp": {"type": "date"},
+                    "processed_at": {"type": "date"},
+                    "level": {"type": "keyword"},
+                    "app": {"type": "keyword"},
+                    "priority": {"type": "keyword"},
+                    "message": {"type": "text"},
+                }
+            },
+        }
+        try:
+            requests.put(f"{OPENSEARCH}/logs-hot", json=mapping, timeout=10)
+        except Exception as e:
+            print(f"opensearch index ensure: {e}", flush=True)
+
+
+    def extract_event(raw_value, headers=None):
+        """Parse fluent-bit / app log into a normalized event dict."""
+        try:
+            obj = json.loads(raw_value)
+        except Exception:
+            return {
+                "timestamp": utcnow().isoformat().replace("+00:00", "Z"),
+                "level": "INFO",
+                "app": "unknown",
+                "priority": "medium",
+                "message": raw_value[:500],
+                "raw": True,
+            }
+
+        priority = None
+        app = None
+        level = None
+        message = None
+        inner = {}
+
+        # Fluent Bit nest lift uses lp_ prefix for merged JSON log fields
+        if any(k.startswith("lp_") for k in obj.keys()):
+            inner = {k[3:]: v for k, v in obj.items() if k.startswith("lp_")}
+
+        if isinstance(obj.get("log"), str):
+            try:
+                parsed = json.loads(obj["log"])
+                if isinstance(parsed, dict):
+                    inner = {**parsed, **inner}
+            except Exception:
+                if not message:
+                    message = obj["log"].strip()
+        elif isinstance(obj.get("log"), dict):
+            inner = {**obj["log"], **inner}
+
+        # CRI/fluent-bit often keeps the app JSON string in "message"
+        msg_field = obj.get("message")
+        if isinstance(msg_field, str) and msg_field.strip().startswith("{"):
+            try:
+                parsed = json.loads(msg_field)
+                if isinstance(parsed, dict):
+                    inner = {**parsed, **inner}
+            except Exception:
+                pass
+
+        # Merge_Log may place fields at top-level
+        for key in ("app", "priority", "level", "message", "timestamp"):
+            if key in obj and key not in inner:
+                inner[key] = obj[key]
+
+        if inner:
+            priority = inner.get("priority")
+            app = inner.get("app")
+            level = inner.get("level")
+            message = inner.get("message", message)
+
+        k8s = obj.get("kubernetes") or {}
+        labels = k8s.get("labels") or {}
+        if not priority:
+            priority = (
+                labels.get("obs.poc/tco-priority")
+                or labels.get("obs_poc_tco_priority")
+                or labels.get("obs-poc-tco-priority")
+            )
+        if not app:
+            app = labels.get("app") or labels.get("app.kubernetes.io/name") or k8s.get("pod_name") or "unknown"
+
+        priority = (priority or "medium").lower()
+        level = (level or "INFO").upper()
+        if level in ("WARNING",):
+            level = "WARN"
+
+        event = {
+            "timestamp": inner.get("timestamp") or obj.get("@timestamp") or utcnow().isoformat().replace("+00:00", "Z"),
+            "level": level,
+            "app": app,
+            "priority": priority,
+            "message": message or "",
+            "namespace": k8s.get("namespace_name") or inner.get("namespace"),
+            "pod": k8s.get("pod_name"),
+        }
+        for k in ("order_id", "tx_id", "latency_ms", "error", "item", "batch_id", "noise"):
+            if k in inner:
+                event[k] = inner[k]
+        return event
+
+
+    def write_hot(producer_unused, event):
+        doc = dict(event)
+        try:
+            r = requests.post(f"{OPENSEARCH}/logs-hot/_doc", json=doc, timeout=5)
+            if r.status_code >= 300:
+                print(f"opensearch write fail: {r.status_code} {r.text[:200]}", flush=True)
+                return False
+            bump(event["priority"], "hot")
+            return True
+        except Exception as e:
+            print(f"opensearch error: {e}", flush=True)
+            return False
+
+
+    def flush_cold(minio_client, priority, app, events):
+        if not events:
+            return
+        bucket = "obs-archive-medium" if priority == "medium" else "obs-archive-low"
+        now = utcnow()
+        key = f"logs/dt={now.strftime('%Y-%m-%d')}/hour={now.strftime('%H')}/{app}-{uuid.uuid4().hex[:10]}.jsonl.gz"
+        buf = io.BytesIO()
+        with gzip.GzipFile(fileobj=buf, mode="wb") as gz:
+            for ev in events:
+                gz.write((json.dumps(ev) + "\n").encode())
+        data = buf.getvalue()
+        try:
+            minio_client.put_object(bucket, key, io.BytesIO(data), length=len(data), content_type="application/gzip")
+            for _ in events:
+                bump(priority, "cold")
+            print(f"minio wrote s3://{bucket}/{key} n={len(events)}", flush=True)
+        except Exception as e:
+            print(f"minio write error: {e}", flush=True)
+
+
+    def cold_flusher(minio_client):
+        while True:
+            time.sleep(COLD_FLUSH_SEC)
+            with cold_lock:
+                items = list(cold_buffers.items())
+                cold_buffers.clear()
+            for (priority, app), events in items:
+                flush_cold(minio_client, priority, app, events)
+
+
+    def maybe_alert(producer, event):
+        if event.get("level") != "ERROR":
+            return
+        with stats_lock:
+            stats["errors_seen"] += 1
+        app = event.get("app") or "unknown"
+        now = time.time()
+        q = error_times[app]
+        q.append(now)
+        while q and now - q[0] > ALERT_WINDOW_SEC:
+            q.popleft()
+        if len(q) >= ALERT_ERROR_THRESHOLD:
+            alert = {
+                "timestamp": utcnow().isoformat().replace("+00:00", "Z"),
+                "type": "error_rate",
+                "app": app,
+                "priority": event.get("priority"),
+                "count": len(q),
+                "window_sec": ALERT_WINDOW_SEC,
+                "threshold": ALERT_ERROR_THRESHOLD,
+                "message": f"In-stream alert: {app} ERROR count {len(q)} in {ALERT_WINDOW_SEC}s",
+                "sample": event.get("message"),
+            }
+            producer.send("telemetry.alerts", json.dumps(alert).encode())
+            with stats_lock:
+                stats["alerts_total"] += 1
+                recent_alerts.appendleft(alert)
+            # reset window to avoid alert flood
+            error_times[app].clear()
+            print(f"ALERT {alert['message']}", flush=True)
+
+
+    def maybe_derived_metric(producer, event):
+        if event.get("level") != "ERROR":
+            return
+        metric = {
+            "timestamp": utcnow().isoformat().replace("+00:00", "Z"),
+            "metric": "log_errors",
+            "app": event.get("app"),
+            "priority": event.get("priority"),
+            "value": 1,
+        }
+        producer.send("telemetry.metrics.derived", json.dumps(metric).encode())
+
+
+    def route(event, producer, minio_client):
+        priority = event.get("priority", "medium")
+        if priority == "block":
+            bump("block", "dropped")
+            return
+        if priority == "high":
+            write_hot(producer, event)
+            return
+        if priority in ("medium", "low"):
+            key = (priority, event.get("app") or "unknown")
+            with cold_lock:
+                cold_buffers[key].append(event)
+                if len(cold_buffers[key]) >= COLD_FLUSH_SIZE:
+                    events = cold_buffers.pop(key)
+                    flush_cold(minio_client, key[0], key[1], events)
+            return
+        # unknown -> treat as medium cold
+        event["priority"] = "medium"
+        route(event, producer, minio_client)
+
+
+    def main():
+        print("streama-lite starting", flush=True)
+        threading.Thread(target=start_http, daemon=True).start()
+
+        producer = KafkaProducer(
+            bootstrap_servers=KAFKA.split(","),
+            acks=1,
+            retries=5,
+            linger_ms=50,
+        )
+        for i in range(90):
+            try:
+                consumer = KafkaConsumer(
+                    "telemetry.raw",
+                    bootstrap_servers=KAFKA.split(","),
+                    group_id="streama-lite",
+                    auto_offset_reset="earliest",
+                    enable_auto_commit=True,
+                    consumer_timeout_ms=1000,
+                )
+                break
+            except Exception as e:
+                print(f"waiting kafka consumer: {e}", flush=True)
+                time.sleep(2)
+        else:
+            raise RuntimeError("cannot connect kafka consumer")
+
+        ensure_opensearch()
+        minio_client = Minio(MINIO_ENDPOINT, access_key=MINIO_ACCESS, secret_key=MINIO_SECRET, secure=MINIO_SECURE)
+        threading.Thread(target=cold_flusher, args=(minio_client,), daemon=True).start()
+        print("streama-lite ready", flush=True)
+
+        while True:
+            try:
+                polled = consumer.poll(timeout_ms=1000)
+                for _tp, records in polled.items():
+                    for msg in records:
+                        try:
+                            raw = msg.value.decode("utf-8", errors="replace")
+                        except Exception as e:
+                            print(f"decode skip: {e}", flush=True)
+                            continue
+                        event = extract_event(raw)
+                        event["processed_at"] = utcnow().isoformat().replace("+00:00", "Z")
+                        event["level"] = (event.get("level") or "INFO").upper()
+                        producer.send("telemetry.enriched", json.dumps(event).encode())
+                        with stats_lock:
+                            stats["enriched_total"] += 1
+                        maybe_alert(producer, event)
+                        maybe_derived_metric(producer, event)
+                        route(event, producer, minio_client)
+            except Exception as e:
+                print(f"loop error: {e}", flush=True)
+                time.sleep(1)
+
+
+    if __name__ == "__main__":
+        main()
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: query-api-code
+  namespace: obs-system
+  labels:
+    app.kubernetes.io/part-of: obs-poc
+    obs.poc/component: config
+data:
+  main.py: |
+    #!/usr/bin/env python3
+    """query-api: hot OpenSearch + cold MinIO + alerts/stats from streama."""
+    import gzip
+    import io
+    import json
+    import os
+    import time
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    from urllib.parse import parse_qs, urlparse
+
+    import requests
+    from minio import Minio
+
+    OPENSEARCH = os.environ.get("OPENSEARCH_URL", "http://opensearch.obs-system:9200").rstrip("/")
+    STREAMA = os.environ.get("STREAMA_URL", "http://streama-lite.obs-system:8080").rstrip("/")
+    MINIO_ENDPOINT = os.environ.get("MINIO_ENDPOINT", "minio.obs-system:9000")
+    MINIO_ACCESS = os.environ.get("MINIO_ACCESS_KEY", "minioadmin")
+    MINIO_SECRET = os.environ.get("MINIO_SECRET_KEY", "minioadmin")
+    MINIO_SECURE = os.environ.get("MINIO_SECURE", "false").lower() == "true"
+
+    minio_client = Minio(MINIO_ENDPOINT, access_key=MINIO_ACCESS, secret_key=MINIO_SECRET, secure=MINIO_SECURE)
+    BUCKETS = {"medium": "obs-archive-medium", "low": "obs-archive-low"}
+
+
+    def json_response(handler, code, obj):
+        data = json.dumps(obj, default=str).encode()
+        handler.send_response(code)
+        handler.send_header("Content-Type", "application/json")
+        handler.send_header("Content-Length", str(len(data)))
+        handler.end_headers()
+        handler.wfile.write(data)
+
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, fmt, *args):
+            return
+
+        def do_GET(self):
+            parsed = urlparse(self.path)
+            path = parsed.path
+            qs = parse_qs(parsed.query)
+
+            if path == "/healthz":
+                return json_response(self, 200, {"status": "ok"})
+
+            if path == "/ai/status":
+                return json_response(self, 200, {"status": "not_implemented"})
+
+            if path == "/stats":
+                try:
+                    r = requests.get(f"{STREAMA}/stats", timeout=5)
+                    return json_response(self, r.status_code, r.json())
+                except Exception as e:
+                    return json_response(self, 502, {"error": str(e)})
+
+            if path == "/alerts/recent":
+                try:
+                    r = requests.get(f"{STREAMA}/stats", timeout=5)
+                    data = r.json()
+                    return json_response(self, 200, {"alerts": data.get("recent_alerts", [])})
+                except Exception as e:
+                    return json_response(self, 502, {"error": str(e)})
+
+            if path == "/hot/search":
+                q = qs.get("q", ["*"])[0]
+                body = {
+                    "size": 50,
+                    "sort": [{"timestamp": {"order": "desc", "unmapped_type": "date"}}],
+                    "query": {
+                        "query_string": {
+                            "query": q if q != "*" else "*",
+                            "default_field": "message",
+                            "analyze_wildcard": True,
+                        }
+                    },
+                }
+                try:
+                    r = requests.post(f"{OPENSEARCH}/logs-hot/_search", json=body, timeout=10)
+                    data = r.json()
+                    hits = [h.get("_source", {}) for h in data.get("hits", {}).get("hits", [])]
+                    return json_response(self, 200, {"total": data.get("hits", {}).get("total"), "hits": hits})
+                except Exception as e:
+                    return json_response(self, 502, {"error": str(e)})
+
+            if path == "/cold/list":
+                priority = qs.get("priority", ["medium"])[0]
+                bucket = BUCKETS.get(priority)
+                if not bucket:
+                    return json_response(self, 400, {"error": "priority must be medium|low"})
+                prefix = qs.get("prefix", ["logs/"])[0]
+                try:
+                    objects = []
+                    for obj in minio_client.list_objects(bucket, prefix=prefix, recursive=True):
+                        objects.append({"key": obj.object_name, "size": obj.size, "last_modified": obj.last_modified})
+                        if len(objects) >= 100:
+                            break
+                    return json_response(self, 200, {"bucket": bucket, "objects": objects})
+                except Exception as e:
+                    return json_response(self, 502, {"error": str(e)})
+
+            if path == "/cold/read":
+                priority = qs.get("priority", ["medium"])[0]
+                key = qs.get("key", [None])[0]
+                bucket = BUCKETS.get(priority)
+                if not bucket or not key:
+                    return json_response(self, 400, {"error": "priority and key required"})
+                try:
+                    resp = minio_client.get_object(bucket, key)
+                    raw = resp.read()
+                    resp.close()
+                    resp.release_conn()
+                    if key.endswith(".gz"):
+                        raw = gzip.GzipFile(fileobj=io.BytesIO(raw)).read()
+                    text = raw.decode("utf-8", errors="replace")
+                    lines = [json.loads(line) for line in text.splitlines() if line.strip()][:50]
+                    return json_response(self, 200, {"bucket": bucket, "key": key, "events": lines})
+                except Exception as e:
+                    return json_response(self, 502, {"error": str(e)})
+
+            return json_response(self, 404, {"error": "not found", "paths": [
+                "/healthz", "/stats", "/alerts/recent", "/hot/search?q=ERROR",
+                "/cold/list?priority=medium", "/cold/read?priority=medium&key=...", "/ai/status"
+            ]})
+
+
+    if __name__ == "__main__":
+        print("query-api starting", flush=True)
+        HTTPServer(("0.0.0.0", 8080), Handler).serve_forever()
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fluent-bit-config
+  namespace: obs-system
+  labels:
+    app.kubernetes.io/part-of: obs-poc
+    obs.poc/component: fluent-bit
+data:
+  fluent-bit.conf: |
+    [SERVICE]
+        Flush         1
+        Daemon        Off
+        Log_Level     info
+        Parsers_File  parsers.conf
+        HTTP_Server   On
+        HTTP_Listen   0.0.0.0
+        HTTP_Port     2020
+
+    [INPUT]
+        Name              tail
+        Tag               kube.*
+        Path              /var/log/containers/*_demo-apps_*.log,/var/log/containers/*_demo-noise_*.log
+        Parser            cri
+        DB                /tmp/flb_kube.db
+        Mem_Buf_Limit     32MB
+        Skip_Long_Lines   On
+        Refresh_Interval  5
+        Inotify_Watcher   false
+
+    [FILTER]
+        Name                kubernetes
+        Match               kube.*
+        Kube_URL            https://kubernetes.default.svc:443
+        Kube_CA_File        /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        Kube_Token_File     /var/run/secrets/kubernetes.io/serviceaccount/token
+        Merge_Log           On
+        Merge_Log_Key       log_processed
+        Keep_Log            On
+        K8S-Logging.Parser  On
+        K8S-Logging.Exclude Off
+        Labels              On
+        Annotations         Off
+
+    [FILTER]
+        Name           nest
+        Match          kube.*
+        Operation      lift
+        Nested_under   log_processed
+        Add_prefix     lp_
+
+    [OUTPUT]
+        Name           kafka
+        Match          kube.*
+        Brokers        redpanda.obs-system.svc.cluster.local:9092
+        Topics         telemetry.raw
+        Timestamp_Key  @timestamp
+        Retry_Limit    false
+        rdkafka.queue.buffering.max.messages  10000
+  parsers.conf: |
+    [PARSER]
+        Name        cri
+        Format      regex
+        Regex       ^(?<time>[^ ]+) (?<stream>stdout|stderr) (?<logtag>[^ ]*) (?<message>.*)$
+        Time_Key    time
+        Time_Format %Y-%m-%dT%H:%M:%S.%L%z
+        Time_Keep   On
+---
+# ========== MinIO (cold archive) ==========
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: minio-data
+  namespace: obs-system
+  labels:
+    app.kubernetes.io/part-of: obs-poc
+    obs.poc/component: minio
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: longhorn
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: minio
+  namespace: obs-system
+  labels:
+    app: minio
+    app.kubernetes.io/part-of: obs-poc
+    obs.poc/component: minio
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: minio
+  template:
+    metadata:
+      labels:
+        app: minio
+        app.kubernetes.io/part-of: obs-poc
+        obs.poc/component: minio
+    spec:
+      containers:
+        - name: minio
+          image: quay.io/minio/minio:RELEASE.2024-10-02T17-50-41Z
+          args: ["server", "/data", "--console-address", ":9001"]
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: minio-creds
+                  key: accesskey
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: minio-creds
+                  key: secretkey
+          ports:
+            - containerPort: 9000
+              name: s3
+            - containerPort: 9001
+              name: console
+          readinessProbe:
+            httpGet:
+              path: /minio/health/ready
+              port: 9000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /minio/health/live
+              port: 9000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: minio-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio
+  namespace: obs-system
+  labels:
+    app: minio
+    app.kubernetes.io/part-of: obs-poc
+    obs.poc/component: minio
+spec:
+  selector:
+    app: minio
+  ports:
+    - name: s3
+      port: 9000
+      targetPort: 9000
+    - name: console
+      port: 9001
+      targetPort: 9001
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: minio-init-buckets
+  namespace: obs-system
+  labels:
+    app.kubernetes.io/part-of: obs-poc
+    obs.poc/component: minio
+spec:
+  backoffLimit: 20
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: obs-poc
+        obs.poc/component: minio
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: mc
+          image: quay.io/minio/mc:RELEASE.2024-10-08T09-37-26Z
+          env:
+            - name: MINIO_ACCESS
+              valueFrom:
+                secretKeyRef:
+                  name: minio-creds
+                  key: accesskey
+            - name: MINIO_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: minio-creds
+                  key: secretkey
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              echo "waiting for minio..."
+              for i in $(seq 1 60); do
+                mc alias set local http://minio.obs-system:9000 "$MINIO_ACCESS" "$MINIO_SECRET" && break
+                sleep 3
+              done
+              mc mb -p local/obs-archive-medium || true
+              mc mb -p local/obs-archive-low || true
+              mc ls local
+              echo "buckets ready"
+          resources:
+            requests:
+              cpu: 20m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+---
+# ========== OpenSearch (hot indexed) ==========
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: opensearch-data
+  namespace: obs-system
+  labels:
+    app.kubernetes.io/part-of: obs-poc
+    obs.poc/component: opensearch
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: longhorn
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opensearch
+  namespace: obs-system
+  labels:
+    app: opensearch
+    app.kubernetes.io/part-of: obs-poc
+    obs.poc/component: opensearch
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: opensearch
+  template:
+    metadata:
+      labels:
+        app: opensearch
+        app.kubernetes.io/part-of: obs-poc
+        obs.poc/component: opensearch
+    spec:
+      securityContext:
+        fsGroup: 1000
+      initContainers:
+        - name: fix-permissions
+          image: busybox:1.36
+          command: ["sh", "-c", "chown -R 1000:1000 /usr/share/opensearch/data && sysctl -w vm.max_map_count=262144 || true"]
+          securityContext:
+            privileged: true
+            runAsUser: 0
+          volumeMounts:
+            - name: data
+              mountPath: /usr/share/opensearch/data
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+      containers:
+        - name: opensearch
+          image: opensearchproject/opensearch:2.11.1
+          securityContext:
+            runAsUser: 1000
+            runAsGroup: 1000
+          env:
+            - name: discovery.type
+              value: single-node
+            - name: plugins.security.disabled
+              value: "true"
+            - name: DISABLE_INSTALL_DEMO_CONFIG
+              value: "true"
+            - name: OPENSEARCH_JAVA_OPTS
+              value: -Xms512m -Xmx512m
+            - name: bootstrap.memory_lock
+              value: "false"
+          ports:
+            - containerPort: 9200
+              name: http
+          readinessProbe:
+            httpGet:
+              path: /_cluster/health
+              port: 9200
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 9200
+            initialDelaySeconds: 60
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 200m
+              memory: 1Gi
+            limits:
+              cpu: "2"
+              memory: 1536Mi
+          volumeMounts:
+            - name: data
+              mountPath: /usr/share/opensearch/data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: opensearch-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: opensearch
+  namespace: obs-system
+  labels:
+    app: opensearch
+    app.kubernetes.io/part-of: obs-poc
+    obs.poc/component: opensearch
+spec:
+  selector:
+    app: opensearch
+  ports:
+    - name: http
+      port: 9200
+      targetPort: 9200
+---
+# ========== Redpanda (Kafka API stream spine) ==========
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redpanda-data
+  namespace: obs-system
+  labels:
+    app.kubernetes.io/part-of: obs-poc
+    obs.poc/component: kafka
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: longhorn
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redpanda
+  namespace: obs-system
+  labels:
+    app: redpanda
+    app.kubernetes.io/part-of: obs-poc
+    obs.poc/component: kafka
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: redpanda
+  template:
+    metadata:
+      labels:
+        app: redpanda
+        app.kubernetes.io/part-of: obs-poc
+        obs.poc/component: kafka
+    spec:
+      securityContext:
+        fsGroup: 101
+      initContainers:
+        - name: fix-permissions
+          image: busybox:1.36
+          command: ["sh", "-c", "chown -R 101:101 /var/lib/redpanda/data"]
+          securityContext:
+            runAsUser: 0
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/redpanda/data
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+      containers:
+        - name: redpanda
+          image: docker.redpanda.com/redpandadata/redpanda:v24.2.4
+          securityContext:
+            runAsUser: 101
+            runAsGroup: 101
+          args:
+            - redpanda
+            - start
+            - --overprovisioned
+            - --smp
+            - "1"
+            - --memory
+            - 1G
+            - --reserve-memory
+            - 0M
+            - --node-id
+            - "0"
+            - --check=false
+            - --kafka-addr
+            - internal://0.0.0.0:9092,external://0.0.0.0:19092
+            - --advertise-kafka-addr
+            - internal://redpanda.obs-system.svc.cluster.local:9092,external://redpanda.obs-system.svc.cluster.local:19092
+            - --pandaproxy-addr
+            - internal://0.0.0.0:8082,external://0.0.0.0:18082
+            - --advertise-pandaproxy-addr
+            - internal://redpanda.obs-system.svc.cluster.local:8082,external://redpanda.obs-system.svc.cluster.local:18082
+            - --schema-registry-addr
+            - internal://0.0.0.0:8081,external://0.0.0.0:18081
+            - --rpc-addr
+            - 0.0.0.0:33145
+            - --advertise-rpc-addr
+            - redpanda.obs-system.svc.cluster.local:33145
+            - --mode
+            - dev-container
+          ports:
+            - containerPort: 9092
+              name: kafka
+            - containerPort: 9644
+              name: admin
+          readinessProbe:
+            exec:
+              command: ["rpk", "cluster", "health"]
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            failureThreshold: 30
+          resources:
+            requests:
+              cpu: 100m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 1536Mi
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/redpanda/data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: redpanda-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redpanda
+  namespace: obs-system
+  labels:
+    app: redpanda
+    app.kubernetes.io/part-of: obs-poc
+    obs.poc/component: kafka
+spec:
+  selector:
+    app: redpanda
+  ports:
+    - name: kafka
+      port: 9092
+      targetPort: 9092
+    - name: admin
+      port: 9644
+      targetPort: 9644
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kafka-init-topics
+  namespace: obs-system
+  labels:
+    app.kubernetes.io/part-of: obs-poc
+    obs.poc/component: kafka
+spec:
+  backoffLimit: 30
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: obs-poc
+        obs.poc/component: kafka
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: rpk
+          image: docker.redpanda.com/redpandadata/redpanda:v24.2.4
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              export RPK_BROKERS=redpanda.obs-system.svc.cluster.local:9092
+              echo "waiting for redpanda..."
+              for i in $(seq 1 90); do
+                rpk cluster health -X brokers="$RPK_BROKERS" && break
+                rpk topic list -X brokers="$RPK_BROKERS" >/dev/null 2>&1 && break
+                sleep 3
+              done
+              for t in telemetry.raw telemetry.enriched telemetry.alerts telemetry.metrics.derived; do
+                rpk topic create "$t" -p 1 -r 1 -X brokers="$RPK_BROKERS" || true
+              done
+              for t in telemetry.raw telemetry.enriched telemetry.alerts telemetry.metrics.derived; do
+                rpk topic alter-config "$t" --set retention.ms=21600000 -X brokers="$RPK_BROKERS" || true
+              done
+              rpk topic list -X brokers="$RPK_BROKERS"
+              echo "topics ready"
+          resources:
+            requests:
+              cpu: 20m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+---
+# ========== Fluent Bit collector ==========
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: fluent-bit
+  namespace: obs-system
+  labels:
+    app.kubernetes.io/part-of: obs-poc
+    obs.poc/component: fluent-bit
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: obs-poc-fluent-bit
+  labels:
+    app.kubernetes.io/part-of: obs-poc
+    obs.poc/component: fluent-bit
+rules:
+  - apiGroups: [""]
+    resources: ["namespaces", "pods"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: obs-poc-fluent-bit
+  labels:
+    app.kubernetes.io/part-of: obs-poc
+    obs.poc/component: fluent-bit
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: obs-poc-fluent-bit
+subjects:
+  - kind: ServiceAccount
+    name: fluent-bit
+    namespace: obs-system
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: fluent-bit
+  namespace: obs-system
+  labels:
+    app: fluent-bit
+    app.kubernetes.io/part-of: obs-poc
+    obs.poc/component: fluent-bit
+spec:
+  selector:
+    matchLabels:
+      app: fluent-bit
+  template:
+    metadata:
+      labels:
+        app: fluent-bit
+        app.kubernetes.io/part-of: obs-poc
+        obs.poc/component: fluent-bit
+    spec:
+      serviceAccountName: fluent-bit
+      containers:
+        - name: fluent-bit
+          image: cr.fluentbit.io/fluent/fluent-bit:3.1.7
+          ports:
+            - containerPort: 2020
+              name: http
+          volumeMounts:
+            - name: config
+              mountPath: /fluent-bit/etc/
+            - name: varlog
+              mountPath: /var/log
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+      volumes:
+        - name: config
+          configMap:
+            name: fluent-bit-config
+        - name: varlog
+          hostPath:
+            path: /var/log
+---
+# ========== Streama-lite ==========
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: streama-lite
+  namespace: obs-system
+  labels:
+    app: streama-lite
+    app.kubernetes.io/part-of: obs-poc
+    obs.poc/component: streama-lite
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: streama-lite
+  template:
+    metadata:
+      labels:
+        app: streama-lite
+        app.kubernetes.io/part-of: obs-poc
+        obs.poc/component: streama-lite
+    spec:
+      containers:
+        - name: streama-lite
+          image: python:3.12-slim
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              apt-get update -qq && apt-get install -y -qq libsnappy1v5 >/dev/null
+              pip install --no-cache-dir kafka-python-ng==2.2.3 python-snappy==0.7.3 minio==7.2.9 requests==2.32.3
+              exec python /app/main.py
+          env:
+            - name: KAFKA_BOOTSTRAP
+              value: redpanda.obs-system.svc.cluster.local:9092
+            - name: OPENSEARCH_URL
+              value: http://opensearch.obs-system.svc.cluster.local:9200
+            - name: MINIO_ENDPOINT
+              value: minio.obs-system.svc.cluster.local:9000
+            - name: MINIO_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: minio-creds
+                  key: accesskey
+            - name: MINIO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: minio-creds
+                  key: secretkey
+            - name: MINIO_SECURE
+              value: "false"
+            - name: ALERT_ERROR_THRESHOLD
+              value: "5"
+            - name: ALERT_WINDOW_SEC
+              value: "60"
+            - name: COLD_FLUSH_SEC
+              value: "10"
+            - name: COLD_FLUSH_SIZE
+              value: "15"
+          ports:
+            - containerPort: 8080
+              name: http
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 50
+            periodSeconds: 5
+            failureThreshold: 40
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          volumeMounts:
+            - name: code
+              mountPath: /app
+      volumes:
+        - name: code
+          configMap:
+            name: streama-lite-code
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: streama-lite
+  namespace: obs-system
+  labels:
+    app: streama-lite
+    app.kubernetes.io/part-of: obs-poc
+    obs.poc/component: streama-lite
+spec:
+  selector:
+    app: streama-lite
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+---
+# ========== Query API ==========
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: query-api
+  namespace: obs-system
+  labels:
+    app: query-api
+    app.kubernetes.io/part-of: obs-poc
+    obs.poc/component: query-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: query-api
+  template:
+    metadata:
+      labels:
+        app: query-api
+        app.kubernetes.io/part-of: obs-poc
+        obs.poc/component: query-api
+    spec:
+      containers:
+        - name: query-api
+          image: python:3.12-slim
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              pip install --no-cache-dir minio==7.2.9 requests==2.32.3
+              exec python /app/main.py
+          env:
+            - name: OPENSEARCH_URL
+              value: http://opensearch.obs-system.svc.cluster.local:9200
+            - name: STREAMA_URL
+              value: http://streama-lite.obs-system.svc.cluster.local:8080
+            - name: MINIO_ENDPOINT
+              value: minio.obs-system.svc.cluster.local:9000
+            - name: MINIO_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: minio-creds
+                  key: accesskey
+            - name: MINIO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: minio-creds
+                  key: secretkey
+            - name: MINIO_SECURE
+              value: "false"
+          ports:
+            - containerPort: 8080
+              name: http
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 5
+            failureThreshold: 30
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          volumeMounts:
+            - name: code
+              mountPath: /app
+      volumes:
+        - name: code
+          configMap:
+            name: query-api-code
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: query-api
+  namespace: obs-system
+  labels:
+    app: query-api
+    app.kubernetes.io/part-of: obs-poc
+    obs.poc/component: query-api
+spec:
+  selector:
+    app: query-api
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+---
+# ========== Demo apps ==========
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: checkout-api
+  namespace: demo-apps
+  labels:
+    app: checkout-api
+    app.kubernetes.io/part-of: obs-poc
+    obs.poc/component: demo-app
+    obs.poc/tco-priority: high
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: checkout-api
+  template:
+    metadata:
+      labels:
+        app: checkout-api
+        app.kubernetes.io/part-of: obs-poc
+        obs.poc/component: demo-app
+        obs.poc/tco-priority: high
+    spec:
+      containers:
+        - name: app
+          image: python:3.12-alpine
+          command: ["python", "/app/main.py"]
+          env:
+            - name: TCO_PRIORITY
+              value: "high"
+            - name: APP_NAME
+              value: "checkout-api"
+
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          ports:
+            - containerPort: 8080
+              name: http
+
+          resources:
+            requests:
+              cpu: 20m
+              memory: 32Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          volumeMounts:
+            - name: code
+              mountPath: /app
+      volumes:
+        - name: code
+          configMap:
+            name: checkout-api-code
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: checkout-api
+  namespace: demo-apps
+  labels:
+    app: checkout-api
+    app.kubernetes.io/part-of: obs-poc
+    obs.poc/component: demo-app
+    obs.poc/tco-priority: high
+spec:
+  selector:
+    app: checkout-api
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: catalog-api
+  namespace: demo-apps
+  labels:
+    app: catalog-api
+    app.kubernetes.io/part-of: obs-poc
+    obs.poc/component: demo-app
+    obs.poc/tco-priority: medium
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: catalog-api
+  template:
+    metadata:
+      labels:
+        app: catalog-api
+        app.kubernetes.io/part-of: obs-poc
+        obs.poc/component: demo-app
+        obs.poc/tco-priority: medium
+    spec:
+      containers:
+        - name: app
+          image: python:3.12-alpine
+          command: ["python", "/app/main.py"]
+          env:
+            - name: TCO_PRIORITY
+              value: "medium"
+            - name: APP_NAME
+              value: "catalog-api"
+
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          ports:
+            - containerPort: 8080
+              name: http
+
+          resources:
+            requests:
+              cpu: 20m
+              memory: 32Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          volumeMounts:
+            - name: code
+              mountPath: /app
+      volumes:
+        - name: code
+          configMap:
+            name: catalog-api-code
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: catalog-api
+  namespace: demo-apps
+  labels:
+    app: catalog-api
+    app.kubernetes.io/part-of: obs-poc
+    obs.poc/component: demo-app
+    obs.poc/tco-priority: medium
+spec:
+  selector:
+    app: catalog-api
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: payments-worker
+  namespace: demo-apps
+  labels:
+    app: payments-worker
+    app.kubernetes.io/part-of: obs-poc
+    obs.poc/component: demo-app
+    obs.poc/tco-priority: high
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: payments-worker
+  template:
+    metadata:
+      labels:
+        app: payments-worker
+        app.kubernetes.io/part-of: obs-poc
+        obs.poc/component: demo-app
+        obs.poc/tco-priority: high
+    spec:
+      containers:
+        - name: app
+          image: python:3.12-alpine
+          command: ["python", "/app/main.py"]
+          env:
+            - name: TCO_PRIORITY
+              value: "high"
+            - name: APP_NAME
+              value: "payments-worker"
+
+          resources:
+            requests:
+              cpu: 20m
+              memory: 32Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          volumeMounts:
+            - name: code
+              mountPath: /app
+      volumes:
+        - name: code
+          configMap:
+            name: payments-worker-code
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: analytics-batch
+  namespace: demo-apps
+  labels:
+    app: analytics-batch
+    app.kubernetes.io/part-of: obs-poc
+    obs.poc/component: demo-app
+    obs.poc/tco-priority: low
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: analytics-batch
+  template:
+    metadata:
+      labels:
+        app: analytics-batch
+        app.kubernetes.io/part-of: obs-poc
+        obs.poc/component: demo-app
+        obs.poc/tco-priority: low
+    spec:
+      containers:
+        - name: app
+          image: python:3.12-alpine
+          command: ["python", "/app/main.py"]
+          env:
+            - name: TCO_PRIORITY
+              value: "low"
+            - name: APP_NAME
+              value: "analytics-batch"
+
+          resources:
+            requests:
+              cpu: 20m
+              memory: 32Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          volumeMounts:
+            - name: code
+              mountPath: /app
+      volumes:
+        - name: code
+          configMap:
+            name: analytics-batch-code
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: debug-spammer
+  namespace: demo-noise
+  labels:
+    app: debug-spammer
+    app.kubernetes.io/part-of: obs-poc
+    obs.poc/component: demo-app
+    obs.poc/tco-priority: block
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: debug-spammer
+  template:
+    metadata:
+      labels:
+        app: debug-spammer
+        app.kubernetes.io/part-of: obs-poc
+        obs.poc/component: demo-app
+        obs.poc/tco-priority: block
+    spec:
+      containers:
+        - name: app
+          image: python:3.12-alpine
+          command: ["python", "/app/main.py"]
+          env:
+            - name: TCO_PRIORITY
+              value: "block"
+            - name: APP_NAME
+              value: "debug-spammer"
+
+          resources:
+            requests:
+              cpu: 20m
+              memory: 32Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          volumeMounts:
+            - name: code
+              mountPath: /app
+      volumes:
+        - name: code
+          configMap:
+            name: debug-spammer-code
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: loadgen
+  namespace: demo-apps
+  labels:
+    app: loadgen
+    app.kubernetes.io/part-of: obs-poc
+    obs.poc/component: demo-app
+    obs.poc/tco-priority: medium
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: loadgen
+  template:
+    metadata:
+      labels:
+        app: loadgen
+        app.kubernetes.io/part-of: obs-poc
+        obs.poc/component: demo-app
+        obs.poc/tco-priority: medium
+    spec:
+      containers:
+        - name: app
+          image: python:3.12-alpine
+          command: ["python", "/app/main.py"]
+          env:
+            - name: TCO_PRIORITY
+              value: "medium"
+            - name: APP_NAME
+              value: "loadgen"
+            - name: CHECKOUT_URL
+              value: http://checkout-api.demo-apps.svc.cluster.local:8080/checkout
+            - name: CATALOG_URL
+              value: http://catalog-api.demo-apps.svc.cluster.local:8080/catalog
+
+          resources:
+            requests:
+              cpu: 20m
+              memory: 32Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          volumeMounts:
+            - name: code
+              mountPath: /app
+      volumes:
+        - name: code
+          configMap:
+            name: loadgen-code
+
+---
