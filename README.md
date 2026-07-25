@@ -1,9 +1,9 @@
 # Next-gen observability POC (k3s)
 
-Stream-first observability prototype inspired by Coralogix architecture:
+Stream-first observability prototype for SyzFlux:
 **Fluent Bit -> Redpanda (Kafka API) -> Streama-lite (enrich / alert / TCO route) -> OpenSearch (hot) + MinIO (cold)**.
 
-See [`diagrams/coralogix-architecture-detailed.svg`](diagrams/coralogix-architecture-detailed.svg).
+See [`diagrams/syzflux-architecture-detailed.svg`](diagrams/syzflux-architecture-detailed.svg).
 
 ## Prerequisites
 
@@ -131,7 +131,7 @@ kubectl -n obs-system delete pvc --all
 - Cold archive is **gzipped JSONL** (Parquet can be phase 2)
 - Demo credentials, security plugin disabled on OpenSearch
 - Streama/query-api `pip install` on container start (slow first boot)
-- Not product Coralogix code -- educational prototype only
+- SyzFlux educational prototype -- not production-hardened
 
 ## Layout
 

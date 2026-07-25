@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1180" width="1600" height="1180" role="img" aria-labelledby="title desc">
-  <title id="title">Coralogix Detailed Architecture - Kafka, Index Strategy, and Storage Tiers</title>
+  <title id="title">SyzFlux Detailed Architecture - Kafka, Index Strategy, and Storage Tiers</title>
   <desc id="desc">Detailed observability architecture: unified ingest via Kafka, Streama in-stream processing without full indexing, TCO routing to OpenSearch hot index vs customer S3 Parquet cold archive, queried by DataPrime.</desc>
 
   <defs>
@@ -52,7 +52,7 @@
   <rect width="1600" height="1180" fill="url(#grid)"/>
 
   <!-- Header -->
-  <text x="48" y="42" fill="#E8F4F8" font-family="Georgia, serif" font-size="30" font-weight="700">Coralogix: Stream-First Single Observability Platform</text>
+  <text x="48" y="42" fill="#E8F4F8" font-family="Georgia, serif" font-size="30" font-weight="700">SyzFlux: Stream-First Single Observability Platform</text>
   <text x="48" y="68" fill="#8FBCCB" font-family="Helvetica, Arial, sans-serif" font-size="14">How Kafka streaming, selective indexing, and S3 cold storage deliver one platform at low TCO</text>
 
   <!-- Legend -->
@@ -194,7 +194,7 @@
     <text x="222" y="590" text-anchor="middle" fill="#C4A880" font-size="10">Index = inverted text + field maps + replicas</text>
 
     <rect x="50" y="612" width="344" height="64" rx="8" fill="#123D3A" stroke="#2EC4B6"/>
-    <text x="222" y="634" text-anchor="middle" fill="#2EC4B6" font-size="12" font-weight="700">Coralogix pattern (efficient)</text>
+    <text x="222" y="634" text-anchor="middle" fill="#2EC4B6" font-size="12" font-weight="700">SyzFlux pattern (efficient)</text>
     <text x="222" y="652" text-anchor="middle" fill="#A8D5DE" font-size="10">Ingest -&gt; stream analyze -&gt; index ONLY High</text>
     <text x="222" y="666" text-anchor="middle" fill="#A8D5DE" font-size="10">Med/Low = columnar Parquet on S3 (no ES index)</text>
 
@@ -212,7 +212,7 @@
 
   <g font-family="Helvetica, Arial, sans-serif">
     <rect x="450" y="536" width="324" height="72" rx="8" fill="url(#hotGrad)"/>
-    <text x="612" y="562" text-anchor="middle" fill="#FFF5EE" font-size="14" font-weight="700">OpenSearch (Coralogix-hosted)</text>
+    <text x="612" y="562" text-anchor="middle" fill="#FFF5EE" font-size="14" font-weight="700">OpenSearch (SyzFlux-hosted)</text>
     <text x="612" y="582" text-anchor="middle" fill="#FFE8D6" font-size="10">Inverted + field indices for sub-second search</text>
     <text x="612" y="596" text-anchor="middle" fill="#FFE8D6" font-size="10">High priority / Frequent Search only</text>
 

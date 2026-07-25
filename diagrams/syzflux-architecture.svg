@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 760" role="img" aria-labelledby="title desc">
-  <title id="title">Coralogix Stream-First Architecture</title>
+  <title id="title">SyzFlux Stream-First Architecture</title>
   <desc id="desc">Architecture diagram showing ingest sources flowing through Kafka Connect and Streama, then TCO Optimizer routing to hot storage, customer S3 cold archive, or block, with DataPrime and AI interfaces querying both tiers.</desc>
 
   <defs>
@@ -44,7 +44,7 @@
   <rect width="1200" height="760" fill="url(#bg)"/>
   <rect width="1200" height="760" fill="url(#grid)"/>
 
-  <text x="48" y="48" fill="#E8F4F8" font-family="Georgia, 'Times New Roman', serif" font-size="28" font-weight="700">Coralogix Architecture</text>
+  <text x="48" y="48" fill="#E8F4F8" font-family="Georgia, 'Times New Roman', serif" font-size="28" font-weight="700">SyzFlux Architecture</text>
   <text x="48" y="76" fill="#8FBCCB" font-family="Helvetica, Arial, sans-serif" font-size="14">Stream-first observability: Kafka analysis in motion, S3 cold storage for cost</text>
 
   <g transform="translate(780, 28)">

@@ -6,7 +6,7 @@ Copy everything below the line into a coding agent (or use this file as the task
 
 ## Goal
 
-Build a **working first prototype** of a Coralogix-inspired **stream-first observability platform** for a local **k3s** cluster.
+Build a **working first prototype** of **SyzFlux**, a **stream-first observability platform**, for a local **k3s** cluster.
 
 Deliver a single applyable manifest:
 
@@ -241,7 +241,7 @@ Include:
 2. Apply + wait commands
 3. Port-forward cheatsheet (MinIO console, OpenSearch, query-api, Kafka optional)
 4. Acceptance test script section (bash) covering F1–F13
-5. Architecture note pointing at `diagrams/coralogix-architecture-detailed.svg`
+5. Architecture note pointing at `diagrams/syzflux-architecture-detailed.svg`
 6. Known POC limitations (single broker, no auth hardening, JSONL vs Parquet if deferred)
 7. Teardown: `kubectl delete -f k3s1.yaml`
 
@@ -256,7 +256,7 @@ Optional: `scripts/smoke-test.sh` if it keeps `k3s1.yaml` cleaner — but prefer
 - Requests/limits on every container (small).
 - Use `emptyDir` or small PVCs; for MinIO/OpenSearch/Kafka prefer PVC so restarts keep data during the demo.
 - If something cannot fit RAM, degrade gracefully in this order: drop Dashboards -> shrink OpenSearch heap -> replace Kafka with Redpanda single binary -> JSONL instead of Parquet.
-- Do **not** pretend to be Coralogix product code; name components `streama-lite`, `tco-router` (can be same process), `query-api`.
+- Name SyzFlux POC components clearly: `streama-lite`, `tco-router` (can be same process), `query-api`.
 
 ---
 
@@ -282,4 +282,4 @@ Optional: `scripts/smoke-test.sh` if it keeps `k3s1.yaml` cleaner — but prefer
 
 ## First message to the implementing agent (short form)
 
-> Implement the POC described in this prompt. Create `k3s1.yaml` (single applyable manifest) and `README.md` for a k3s stream-first observability prototype: sample apps with High/Med/Low/Block TCO labels, Fluent Bit or OTel -> Kafka -> Streama-lite (parse/enrich/alert/derive metrics/TCO route) -> OpenSearch hot + MinIO cold archive + query-api. Make features F1–F13 verifiable. Keep it laptop-sized. Use MinIO instead of AWS S3. Follow the architecture in `diagrams/coralogix-architecture-detailed.svg`.
+> Implement the POC described in this prompt. Create `k3s1.yaml` (single applyable manifest) and `README.md` for a k3s stream-first observability prototype: sample apps with High/Med/Low/Block TCO labels, Fluent Bit or OTel -> Kafka -> Streama-lite (parse/enrich/alert/derive metrics/TCO route) -> OpenSearch hot + MinIO cold archive + query-api. Make features F1–F13 verifiable. Keep it laptop-sized. Use MinIO instead of AWS S3. Follow the architecture in `diagrams/syzflux-architecture-detailed.svg`.
