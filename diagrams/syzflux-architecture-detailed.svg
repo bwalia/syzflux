@@ -1,0 +1,339 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1180" width="1600" height="1180" role="img" aria-labelledby="title desc">
+  <title id="title">SyzFlux Detailed Architecture - Kafka, Index Strategy, and Storage Tiers</title>
+  <desc id="desc">Detailed observability architecture: unified ingest via Kafka, Streama in-stream processing without full indexing, TCO routing to OpenSearch hot index vs customer S3 Parquet cold archive, queried by DataPrime.</desc>
+
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0.3" y2="1">
+      <stop offset="0%" stop-color="#071820"/>
+      <stop offset="50%" stop-color="#0C2430"/>
+      <stop offset="100%" stop-color="#0A1F28"/>
+    </linearGradient>
+    <linearGradient id="panel" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#153848"/>
+      <stop offset="100%" stop-color="#102F3C"/>
+    </linearGradient>
+    <linearGradient id="kafkaGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#1A8F86"/>
+      <stop offset="100%" stop-color="#157A72"/>
+    </linearGradient>
+    <linearGradient id="hotGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#D96B2F"/>
+      <stop offset="100%" stop-color="#B8521F"/>
+    </linearGradient>
+    <linearGradient id="coldGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#2E6F94"/>
+      <stop offset="100%" stop-color="#245A78"/>
+    </linearGradient>
+    <linearGradient id="indexGrad" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#C47A2A"/>
+      <stop offset="100%" stop-color="#A86520"/>
+    </linearGradient>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#7FB8C9"/>
+    </marker>
+    <marker id="arrTeal" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#2EC4B6"/>
+    </marker>
+    <marker id="arrHot" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#E07A3D"/>
+    </marker>
+    <marker id="arrCold" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#5BA3C9"/>
+    </marker>
+    <filter id="shadow" x="-8%" y="-8%" width="116%" height="124%">
+      <feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#000" flood-opacity="0.35"/>
+    </filter>
+    <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse">
+      <path d="M32 0 H0 V32" fill="none" stroke="#1A4558" stroke-width="0.5" opacity="0.4"/>
+    </pattern>
+  </defs>
+
+  <rect width="1600" height="1180" fill="url(#bg)"/>
+  <rect width="1600" height="1180" fill="url(#grid)"/>
+
+  <!-- Header -->
+  <text x="48" y="42" fill="#E8F4F8" font-family="Georgia, serif" font-size="30" font-weight="700">SyzFlux: Stream-First Single Observability Platform</text>
+  <text x="48" y="68" fill="#8FBCCB" font-family="Helvetica, Arial, sans-serif" font-size="14">How Kafka streaming, selective indexing, and S3 cold storage deliver one platform at low TCO</text>
+
+  <!-- Legend -->
+  <g transform="translate(980, 24)">
+    <rect width="580" height="52" rx="8" fill="#0D2834" stroke="#2A5A6E"/>
+    <circle cx="22" cy="26" r="5" fill="#2EC4B6"/><text x="34" y="30" fill="#CDE4EC" font-family="Helvetica, Arial, sans-serif" font-size="11">Stream (no index wait)</text>
+    <circle cx="200" cy="26" r="5" fill="#E07A3D"/><text x="212" y="30" fill="#CDE4EC" font-family="Helvetica, Arial, sans-serif" font-size="11">Hot indexed</text>
+    <circle cx="320" cy="26" r="5" fill="#5BA3C9"/><text x="332" y="30" fill="#CDE4EC" font-family="Helvetica, Arial, sans-serif" font-size="11">Cold archive (index-free)</text>
+    <circle cx="500" cy="26" r="5" fill="#C4A060"/><text x="512" y="30" fill="#CDE4EC" font-family="Helvetica, Arial, sans-serif" font-size="11">Query path</text>
+  </g>
+
+  <!-- ========== ROW 1: PIPELINE ========== -->
+
+  <!-- Sources -->
+  <g filter="url(#shadow)">
+    <rect x="32" y="100" width="200" height="340" rx="14" fill="url(#panel)" stroke="#2F6A7F" stroke-width="1.5"/>
+  </g>
+  <text x="132" y="128" text-anchor="middle" fill="#7FD4CC" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="700" letter-spacing="1.2">1. TELEMETRY SOURCES</text>
+  <text x="132" y="146" text-anchor="middle" fill="#6A9AAB" font-family="Helvetica, Arial, sans-serif" font-size="10">All signals, one pipe</text>
+
+  <g font-family="Helvetica, Arial, sans-serif">
+    <rect x="48" y="160" width="168" height="44" rx="7" fill="#0C2530" stroke="#3A7A90"/>
+    <text x="132" y="178" text-anchor="middle" fill="#E8F4F8" font-size="12" font-weight="600">Applications</text>
+    <text x="132" y="194" text-anchor="middle" fill="#8FBCCB" font-size="10">OTel / SDKs / Fluent</text>
+
+    <rect x="48" y="214" width="168" height="44" rx="7" fill="#0C2530" stroke="#3A7A90"/>
+    <text x="132" y="232" text-anchor="middle" fill="#E8F4F8" font-size="12" font-weight="600">Infrastructure</text>
+    <text x="132" y="248" text-anchor="middle" fill="#8FBCCB" font-size="10">K8s / hosts / Prometheus</text>
+
+    <rect x="48" y="268" width="168" height="44" rx="7" fill="#0C2530" stroke="#3A7A90"/>
+    <text x="132" y="286" text-anchor="middle" fill="#E8F4F8" font-size="12" font-weight="600">Security</text>
+    <text x="132" y="302" text-anchor="middle" fill="#8FBCCB" font-size="10">Audit / cloud / SIEM feeds</text>
+
+    <rect x="48" y="322" width="168" height="44" rx="7" fill="#0C2530" stroke="#3A7A90"/>
+    <text x="132" y="340" text-anchor="middle" fill="#E8F4F8" font-size="12" font-weight="600">AI / LLM workloads</text>
+    <text x="132" y="356" text-anchor="middle" fill="#8FBCCB" font-size="10">Traces / prompts / costs</text>
+
+    <rect x="48" y="380" width="168" height="44" rx="7" fill="#123D3A" stroke="#2EC4B6"/>
+    <text x="132" y="398" text-anchor="middle" fill="#2EC4B6" font-size="11" font-weight="600">Unified signals</text>
+    <text x="132" y="414" text-anchor="middle" fill="#A8D5DE" font-size="10">Logs + Metrics + Traces</text>
+  </g>
+
+  <path d="M232 270 H268" stroke="#7FB8C9" stroke-width="2.5" fill="none" marker-end="url(#arr)"/>
+
+  <!-- Kafka / Streama core -->
+  <g filter="url(#shadow)">
+    <rect x="270" y="100" width="420" height="340" rx="14" fill="url(#panel)" stroke="#2EC4B6" stroke-width="2"/>
+  </g>
+  <text x="480" y="128" text-anchor="middle" fill="#7FD4CC" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="700" letter-spacing="1.2">2. KAFKA + STREAMA (CONTROL PLANE)</text>
+  <text x="480" y="146" text-anchor="middle" fill="#6A9AAB" font-family="Helvetica, Arial, sans-serif" font-size="10">Source - Stream - Sink on Kafka Streams</text>
+
+  <!-- Kafka Connect -->
+  <g font-family="Helvetica, Arial, sans-serif">
+    <rect x="290" y="160" width="180" height="70" rx="8" fill="url(#kafkaGrad)"/>
+    <text x="380" y="186" text-anchor="middle" fill="#062428" font-size="13" font-weight="700">Kafka Connect</text>
+    <text x="380" y="204" text-anchor="middle" fill="#0A3538" font-size="10">Ingest any source</text>
+    <text x="380" y="218" text-anchor="middle" fill="#0A3538" font-size="10">Topics + KTables</text>
+
+    <rect x="490" y="160" width="180" height="70" rx="8" fill="#0C2E38" stroke="#2EC4B6"/>
+    <text x="580" y="186" text-anchor="middle" fill="#2EC4B6" font-size="13" font-weight="700">Kafka Topics</text>
+    <text x="580" y="204" text-anchor="middle" fill="#A8D5DE" font-size="10">Buffered, durable, ordered</text>
+    <text x="580" y="218" text-anchor="middle" fill="#A8D5DE" font-size="10">Backpressure + fan-out</text>
+  </g>
+
+  <!-- Streama detail -->
+  <g font-family="Helvetica, Arial, sans-serif">
+    <rect x="290" y="246" width="380" height="174" rx="8" fill="#0A2A32" stroke="#2EC4B6" stroke-width="1.5"/>
+    <text x="480" y="270" text-anchor="middle" fill="#2EC4B6" font-size="14" font-weight="700">Streama - stateful in-stream engine</text>
+    <text x="480" y="288" text-anchor="middle" fill="#8FBCCB" font-size="10">Process events IN MOTION - before (or without) full indexing</text>
+
+    <rect x="306" y="300" width="110" height="48" rx="6" fill="#123D3A" stroke="#1FA8A0"/>
+    <text x="361" y="320" text-anchor="middle" fill="#E8F4F8" font-size="11" font-weight="600">Parse</text>
+    <text x="361" y="336" text-anchor="middle" fill="#8FBCCB" font-size="9">structure fields</text>
+
+    <rect x="426" y="300" width="110" height="48" rx="6" fill="#123D3A" stroke="#1FA8A0"/>
+    <text x="481" y="320" text-anchor="middle" fill="#E8F4F8" font-size="11" font-weight="600">Enrich</text>
+    <text x="481" y="336" text-anchor="middle" fill="#8FBCCB" font-size="9">metadata / context</text>
+
+    <rect x="546" y="300" width="110" height="48" rx="6" fill="#123D3A" stroke="#1FA8A0"/>
+    <text x="601" y="320" text-anchor="middle" fill="#E8F4F8" font-size="11" font-weight="600">ML cluster</text>
+    <text x="601" y="336" text-anchor="middle" fill="#8FBCCB" font-size="9">patterns / anomalies</text>
+
+    <rect x="306" y="358" width="168" height="48" rx="6" fill="#154038" stroke="#2EC4B6"/>
+    <text x="390" y="378" text-anchor="middle" fill="#E8F4F8" font-size="11" font-weight="600">In-stream alerts</text>
+    <text x="390" y="394" text-anchor="middle" fill="#A8D5DE" font-size="9">&lt;1ms detection - no index lag</text>
+
+    <rect x="488" y="358" width="168" height="48" rx="6" fill="#154038" stroke="#2EC4B6"/>
+    <text x="572" y="378" text-anchor="middle" fill="#E8F4F8" font-size="11" font-weight="600">Derive metrics</text>
+    <text x="572" y="394" text-anchor="middle" fill="#A8D5DE" font-size="9">logs/spans -&gt; metrics live</text>
+  </g>
+
+  <path d="M690 270 H726" stroke="#2EC4B6" stroke-width="2.5" fill="none" marker-end="url(#arrTeal)"/>
+
+  <!-- TCO -->
+  <g filter="url(#shadow)">
+    <rect x="728" y="100" width="220" height="340" rx="14" fill="url(#panel)" stroke="#C4A060" stroke-width="1.5"/>
+  </g>
+  <text x="838" y="128" text-anchor="middle" fill="#D4B878" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="700" letter-spacing="1.2">3. TCO OPTIMIZER</text>
+  <text x="838" y="146" text-anchor="middle" fill="#6A9AAB" font-family="Helvetica, Arial, sans-serif" font-size="10">Decide storage cost NOW</text>
+
+  <g font-family="Helvetica, Arial, sans-serif">
+    <text x="838" y="172" text-anchor="middle" fill="#8FBCCB" font-size="10">Policy on application / subsystem</text>
+    <text x="838" y="188" text-anchor="middle" fill="#8FBCCB" font-size="10">Route at ingest - not after bloat</text>
+
+    <rect x="746" y="206" width="184" height="42" rx="6" fill="url(#hotGrad)"/>
+    <text x="838" y="224" text-anchor="middle" fill="#FFF5EE" font-size="12" font-weight="700">HIGH - Frequent Search</text>
+    <text x="838" y="240" text-anchor="middle" fill="#FFE8D6" font-size="9">Hot indexed OpenSearch</text>
+
+    <rect x="746" y="260" width="184" height="42" rx="6" fill="url(#coldGrad)"/>
+    <text x="838" y="278" text-anchor="middle" fill="#EAF6FC" font-size="12" font-weight="700">MEDIUM - Monitoring</text>
+    <text x="838" y="294" text-anchor="middle" fill="#D0EAF5" font-size="9">S3 + alert/dashboard support</text>
+
+    <rect x="746" y="314" width="184" height="42" rx="6" fill="#245A78" stroke="#5BA3C9"/>
+    <text x="838" y="332" text-anchor="middle" fill="#EAF6FC" font-size="12" font-weight="700">LOW - Compliance</text>
+    <text x="838" y="348" text-anchor="middle" fill="#B8DCEB" font-size="9">S3 archive, queryable later</text>
+
+    <rect x="746" y="368" width="184" height="42" rx="6" fill="#2A2430" stroke="#6A5A6A" stroke-dasharray="4 3"/>
+    <text x="838" y="386" text-anchor="middle" fill="#C4A8B4" font-size="12" font-weight="700">BLOCK</text>
+    <text x="838" y="402" text-anchor="middle" fill="#A89098" font-size="9">Drop - never store</text>
+  </g>
+
+  <!-- Arrows from TCO to storage row -->
+  <path d="M838 440 V470" stroke="#E07A3D" stroke-width="2" fill="none" marker-end="url(#arrHot)"/>
+  <path d="M800 440 L580 470" stroke="#5BA3C9" stroke-width="2" fill="none" marker-end="url(#arrCold)"/>
+  <path d="M876 440 L1100 470" stroke="#5BA3C9" stroke-width="2" fill="none" marker-end="url(#arrCold)"/>
+
+  <!-- ========== ROW 2: STORAGE + INDEX DETAIL ========== -->
+
+  <!-- Index strategy callout -->
+  <g filter="url(#shadow)">
+    <rect x="32" y="490" width="380" height="280" rx="14" fill="url(#panel)" stroke="#C47A2A" stroke-width="1.5"/>
+  </g>
+  <text x="222" y="518" text-anchor="middle" fill="#E0B060" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="700" letter-spacing="1.2">4. INDEX STRATEGY (THE COST LEVER)</text>
+
+  <g font-family="Helvetica, Arial, sans-serif">
+    <rect x="50" y="536" width="344" height="64" rx="8" fill="#2A1F12" stroke="#C47A2A"/>
+    <text x="222" y="558" text-anchor="middle" fill="#F0D090" font-size="12" font-weight="700">Legacy pattern (expensive)</text>
+    <text x="222" y="576" text-anchor="middle" fill="#C4A880" font-size="10">Ingest -&gt; INDEX EVERYTHING hot -&gt; pay forever</text>
+    <text x="222" y="590" text-anchor="middle" fill="#C4A880" font-size="10">Index = inverted text + field maps + replicas</text>
+
+    <rect x="50" y="612" width="344" height="64" rx="8" fill="#123D3A" stroke="#2EC4B6"/>
+    <text x="222" y="634" text-anchor="middle" fill="#2EC4B6" font-size="12" font-weight="700">SyzFlux pattern (efficient)</text>
+    <text x="222" y="652" text-anchor="middle" fill="#A8D5DE" font-size="10">Ingest -&gt; stream analyze -&gt; index ONLY High</text>
+    <text x="222" y="666" text-anchor="middle" fill="#A8D5DE" font-size="10">Med/Low = columnar Parquet on S3 (no ES index)</text>
+
+    <text x="50" y="702" fill="#8FBCCB" font-size="10">Why indexing everything hurts:</text>
+    <text x="50" y="720" fill="#6A9AAB" font-size="10">- Index often 1.5-3x raw size (tokens, docs, segments)</text>
+    <text x="50" y="736" fill="#6A9AAB" font-size="10">- Hot SSD / RAM for search clusters is costly</text>
+    <text x="50" y="752" fill="#6A9AAB" font-size="10">- Alerting waits on index refresh (latency tax)</text>
+  </g>
+
+  <!-- Hot storage -->
+  <g filter="url(#shadow)">
+    <rect x="432" y="490" width="360" height="280" rx="14" fill="url(#panel)" stroke="#E07A3D" stroke-width="1.5"/>
+  </g>
+  <text x="612" y="518" text-anchor="middle" fill="#F0A070" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="700" letter-spacing="1.2">5. HOT STORAGE (INDEXED)</text>
+
+  <g font-family="Helvetica, Arial, sans-serif">
+    <rect x="450" y="536" width="324" height="72" rx="8" fill="url(#hotGrad)"/>
+    <text x="612" y="562" text-anchor="middle" fill="#FFF5EE" font-size="14" font-weight="700">OpenSearch (SyzFlux-hosted)</text>
+    <text x="612" y="582" text-anchor="middle" fill="#FFE8D6" font-size="10">Inverted + field indices for sub-second search</text>
+    <text x="612" y="596" text-anchor="middle" fill="#FFE8D6" font-size="10">High priority / Frequent Search only</text>
+
+    <text x="458" y="636" fill="#E8F4F8" font-size="11" font-weight="600">What lives here</text>
+    <text x="458" y="654" fill="#8FBCCB" font-size="10">- Critical app logs and error paths</text>
+    <text x="458" y="670" fill="#8FBCCB" font-size="10">- Data needing interactive investigation</text>
+    <text x="458" y="686" fill="#8FBCCB" font-size="10">- Fast dashboards and live forensics</text>
+
+    <text x="458" y="714" fill="#E8F4F8" font-size="11" font-weight="600">Tradeoff</text>
+    <text x="458" y="732" fill="#C4A080" font-size="10">Highest $/GB - keep volume small via TCO</text>
+    <text x="458" y="748" fill="#C4A080" font-size="10">Index refresh enables fastest queries</text>
+  </g>
+
+  <!-- Cold S3 -->
+  <g filter="url(#shadow)">
+    <rect x="812" y="490" width="360" height="280" rx="14" fill="url(#panel)" stroke="#5BA3C9" stroke-width="1.5"/>
+  </g>
+  <text x="992" y="518" text-anchor="middle" fill="#7EC0E0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="700" letter-spacing="1.2">6. COLD STORAGE (INDEX-FREE)</text>
+
+  <g font-family="Helvetica, Arial, sans-serif">
+    <rect x="830" y="536" width="324" height="72" rx="8" fill="url(#coldGrad)"/>
+    <text x="992" y="562" text-anchor="middle" fill="#EAF6FC" font-size="14" font-weight="700">Your cloud S3 bucket</text>
+    <text x="992" y="582" text-anchor="middle" fill="#D0EAF5" font-size="10">Logs/traces: Parquet (columnar, compressed)</text>
+    <text x="992" y="596" text-anchor="middle" fill="#D0EAF5" font-size="10">Metrics: Prometheus TSDB blocks</text>
+
+    <text x="838" y="636" fill="#E8F4F8" font-size="11" font-weight="600">Why storage stays low</text>
+    <text x="838" y="654" fill="#8FBCCB" font-size="10">- Object storage &lt;&lt; indexed cluster cost</text>
+    <text x="838" y="670" fill="#8FBCCB" font-size="10">- Parquet compresses well (column prune)</text>
+    <text x="838" y="686" fill="#8FBCCB" font-size="10">- Lifecycle policies you control (IA / Glacier)</text>
+    <text x="838" y="702" fill="#8FBCCB" font-size="10">- No rehydrate tax - DataPrime queries remote</text>
+
+    <text x="838" y="730" fill="#E8F4F8" font-size="11" font-weight="600">Medium vs Low</text>
+    <text x="838" y="748" fill="#A8C8D8" font-size="10">Med: alerting + dashboards | Low: compliance retain</text>
+  </g>
+
+  <!-- Query path -->
+  <g filter="url(#shadow)">
+    <rect x="1192" y="490" width="376" height="280" rx="14" fill="url(#panel)" stroke="#C4A060" stroke-width="1.5"/>
+  </g>
+  <text x="1380" y="518" text-anchor="middle" fill="#D4B878" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="700" letter-spacing="1.2">7. QUERY + AI (ONE LANGUAGE)</text>
+
+  <g font-family="Helvetica, Arial, sans-serif">
+    <rect x="1210" y="536" width="340" height="56" rx="8" fill="#1A3420" stroke="#C4A060"/>
+    <text x="1380" y="560" text-anchor="middle" fill="#E8F4F8" font-size="13" font-weight="700">DataPrime engine</text>
+    <text x="1380" y="578" text-anchor="middle" fill="#B8C8A0" font-size="10">Same query across hot index + S3 archive</text>
+
+    <rect x="1210" y="606" width="160" height="70" rx="7" fill="#0C2530" stroke="#E07A3D"/>
+    <text x="1290" y="632" text-anchor="middle" fill="#F0A070" font-size="11" font-weight="600">Hot path</text>
+    <text x="1290" y="650" text-anchor="middle" fill="#8FBCCB" font-size="9">OpenSearch index</text>
+    <text x="1290" y="664" text-anchor="middle" fill="#8FBCCB" font-size="9">ms-level search</text>
+
+    <rect x="1390" y="606" width="160" height="70" rx="7" fill="#0C2530" stroke="#5BA3C9"/>
+    <text x="1470" y="632" text-anchor="middle" fill="#7EC0E0" font-size="11" font-weight="600">Archive path</text>
+    <text x="1470" y="650" text-anchor="middle" fill="#8FBCCB" font-size="9">Scan Parquet on S3</text>
+    <text x="1470" y="664" text-anchor="middle" fill="#8FBCCB" font-size="9">slower, still live</text>
+
+    <rect x="1210" y="692" width="340" height="58" rx="7" fill="#123D3A" stroke="#2EC4B6"/>
+    <text x="1380" y="716" text-anchor="middle" fill="#2EC4B6" font-size="12" font-weight="600">AI: Olly / MCP / CLI</text>
+    <text x="1380" y="734" text-anchor="middle" fill="#A8D5DE" font-size="10">Agents query the same unified data layer</text>
+  </g>
+
+  <!-- Connect hot/cold to query visually -->
+  <path d="M792 630 H812" stroke="#E07A3D" stroke-width="1.5" fill="none" opacity="0.5"/>
+  <path d="M1172 630 H1192" stroke="#5BA3C9" stroke-width="1.5" fill="none" opacity="0.5"/>
+
+  <!-- ========== ROW 3: WHY KAFKA ========== -->
+  <g filter="url(#shadow)">
+    <rect x="32" y="796" width="1536" height="200" rx="14" fill="#0D2834" stroke="#2EC4B6" stroke-width="1.5"/>
+  </g>
+  <text x="56" y="828" fill="#2EC4B6" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="700" letter-spacing="1.2">8. HOW KAFKA ENABLES ONE EFFICIENT PLATFORM</text>
+
+  <g font-family="Helvetica, Arial, sans-serif">
+    <!-- Card 1 -->
+    <rect x="52" y="848" width="290" height="128" rx="10" fill="#123D3A" stroke="#1FA8A0"/>
+    <text x="197" y="874" text-anchor="middle" fill="#E8F4F8" font-size="13" font-weight="700">Single ingest spine</text>
+    <text x="68" y="898" fill="#A8D5DE" font-size="11">Logs, metrics, traces, security,</text>
+    <text x="68" y="916" fill="#A8D5DE" font-size="11">and AI telemetry share one Kafka</text>
+    <text x="68" y="934" fill="#A8D5DE" font-size="11">pipeline - correlation without silos.</text>
+    <text x="68" y="956" fill="#7FD4CC" font-size="10">One platform = one event bus</text>
+
+    <!-- Card 2 -->
+    <rect x="358" y="848" width="290" height="128" rx="10" fill="#123D3A" stroke="#1FA8A0"/>
+    <text x="503" y="874" text-anchor="middle" fill="#E8F4F8" font-size="13" font-weight="700">Decouple analyze from store</text>
+    <text x="374" y="898" fill="#A8D5DE" font-size="11">Stream processors alert, enrich,</text>
+    <text x="374" y="916" fill="#A8D5DE" font-size="11">and derive metrics while data is</text>
+    <text x="374" y="934" fill="#A8D5DE" font-size="11">still in Kafka - storage is optional.</text>
+    <text x="374" y="956" fill="#7FD4CC" font-size="10">Value before (or without) indexing</text>
+
+    <!-- Card 3 -->
+    <rect x="664" y="848" width="290" height="128" rx="10" fill="#1A3548" stroke="#5BA3C9"/>
+    <text x="809" y="874" text-anchor="middle" fill="#E8F4F8" font-size="13" font-weight="700">Durable buffer + scale</text>
+    <text x="680" y="898" fill="#A8D5DE" font-size="11">Topics absorb spikes; consumers</text>
+    <text x="680" y="916" fill="#A8D5DE" font-size="11">scale independently (K8s HPA/Keda).</text>
+    <text x="680" y="934" fill="#A8D5DE" font-size="11">Backpressure protects downstream</text>
+    <text x="680" y="952" fill="#A8D5DE" font-size="11">OpenSearch and S3 writers.</text>
+
+    <!-- Card 4 -->
+    <rect x="970" y="848" width="290" height="128" rx="10" fill="#1A3548" stroke="#5BA3C9"/>
+    <text x="1115" y="874" text-anchor="middle" fill="#E8F4F8" font-size="13" font-weight="700">Stateful streams (KTables)</text>
+    <text x="986" y="898" fill="#A8D5DE" font-size="11">Hold enrichment state and</text>
+    <text x="986" y="916" fill="#A8D5DE" font-size="11">long-horizon aggregates in Kafka</text>
+    <text x="986" y="934" fill="#A8D5DE" font-size="11">state stores - not only in a hot DB.</text>
+    <text x="986" y="956" fill="#7FD4CC" font-size="10">Trends without bloating the index</text>
+
+    <!-- Card 5 -->
+    <rect x="1276" y="848" width="274" height="128" rx="10" fill="#2A1F12" stroke="#C47A2A"/>
+    <text x="1413" y="874" text-anchor="middle" fill="#E8F4F8" font-size="13" font-weight="700">Fan-out sinks</text>
+    <text x="1292" y="898" fill="#D4C0A0" font-size="11">Same stream branches to:</text>
+    <text x="1292" y="916" fill="#D4C0A0" font-size="11">hot index, S3 Parquet, alerts,</text>
+    <text x="1292" y="934" fill="#D4C0A0" font-size="11">webhooks, external tools - once.</text>
+    <text x="1292" y="956" fill="#E0B060" font-size="10">No duplicate pipelines</text>
+  </g>
+
+  <!-- Footer summary -->
+  <g filter="url(#shadow)">
+    <rect x="32" y="1020" width="1536" height="132" rx="14" fill="#0A222C" stroke="#2A5A6E"/>
+  </g>
+  <text x="56" y="1052" fill="#7FD4CC" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="700" letter-spacing="1">BOTTOM LINE</text>
+  <g font-family="Helvetica, Arial, sans-serif">
+    <text x="56" y="1080" fill="#E8F4F8" font-size="13">Kafka = the nervous system (ingest, buffer, fan-out, in-stream compute).</text>
+    <text x="56" y="1102" fill="#E8F4F8" font-size="13">Index = scarce resource applied only to High-priority data in OpenSearch.</text>
+    <text x="56" y="1124" fill="#E8F4F8" font-size="13">S3 Parquet = cheap long-term body of truth, still queryable - so you keep more data for less money on one platform.</text>
+  </g>
+</svg>
